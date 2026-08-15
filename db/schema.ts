@@ -222,6 +222,7 @@ export const tasks = sqliteTable(
     assigneeId: text("assignee_id"),
     projectId: text("project_id"),
     handoffRequired: integer("handoff_required", { mode: "boolean" }).notNull().default(false),
+    executionCycle: integer("execution_cycle").notNull().default(1),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
@@ -229,6 +230,75 @@ export const tasks = sqliteTable(
     index("idx_tasks_status_updated").on(table.status, table.updatedAt),
     index("idx_tasks_project_status").on(table.projectId, table.status),
   ],
+);
+
+export const agentRuns = sqliteTable(
+  "agent_runs",
+  {
+    id: text("id").primaryKey(),
+    jobType: text("job_type").notNull(),
+    jobId: text("job_id").notNull(),
+    taskId: text("task_id"),
+    employeeId: text("employee_id").notNull(),
+    status: text("status").notNull().default("claimed"),
+    attempt: integer("attempt").notNull().default(1),
+    executionCycle: integer("execution_cycle").notNull().default(1),
+    workerId: text("worker_id").notNull(),
+    promptSummary: text("prompt_summary").notNull().default(""),
+    lastEvent: text("last_event").notNull().default("Claimed by the company dispatcher."),
+    resultSummary: text("result_summary").notNull().default(""),
+    deliverables: text("deliverables").notNull().default("[]"),
+    decisions: text("decisions").notNull().default("[]"),
+    followUp: text("follow_up").notNull().default("[]"),
+    knowledge: text("knowledge").notNull().default(""),
+    error: text("error"),
+    threadId: text("thread_id"),
+    leaseExpiresAt: text("lease_expires_at"),
+    heartbeatAt: text("heartbeat_at"),
+    startedAt: text("started_at"),
+    finishedAt: text("finished_at"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_agent_runs_employee_created").on(table.employeeId, table.createdAt),
+    index("idx_agent_runs_task_created").on(table.taskId, table.createdAt),
+    uniqueIndex("idx_agent_runs_active_job").on(table.jobType, table.jobId)
+      .where(sql`status IN ('claimed', 'running')`),
+  ],
+);
+
+export const agentRunEvents = sqliteTable(
+  "agent_run_events",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    eventKey: text("event_key").notNull(),
+    runId: text("run_id").notNull(),
+    employeeId: text("employee_id").notNull(),
+    eventType: text("event_type").notNull(),
+    message: text("message").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("idx_agent_run_events_key").on(table.eventKey),
+    index("idx_agent_run_events_run_created").on(table.runId, table.createdAt),
+    index("idx_agent_run_events_employee_created").on(table.employeeId, table.createdAt),
+  ],
+);
+
+export const secretaryInquiries = sqliteTable(
+  "secretary_inquiries",
+  {
+    id: text("id").primaryKey(),
+    question: text("question").notNull(),
+    status: text("status").notNull().default("queued"),
+    answer: text("answer").notNull().default(""),
+    runId: text("run_id"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    answeredAt: text("answered_at"),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("idx_secretary_inquiries_status_created").on(table.status, table.createdAt)],
 );
 
 export const animationMappings = sqliteTable("animation_mappings", {

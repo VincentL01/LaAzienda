@@ -46,7 +46,7 @@ write_volume_file() {
   volume="$1"
   target="$2"
   mode="$3"
-  docker run --rm -i --entrypoint sh --volume "$volume:/target" "$base_image" -c "umask 077; mkdir -p \"\$(dirname '/target/$target')\"; cat > '/target/$target'; chmod '$mode' '/target/$target'"
+  docker run --rm -i --user 0 --entrypoint sh --volume "$volume:/target" "$base_image" -c "umask 077; mkdir -p \"\$(dirname '/target/$target')\"; cat > '/target/$target'; chmod '$mode' '/target/$target'; chown -R 1001:1001 /target"
 }
 
 report_runtime() {
@@ -90,7 +90,7 @@ printf '%s' "$workforce" | jq -c --arg hrm "$hrm_id" '.employees[] | select(.id 
     prompt="$(printf '%s' "$employee" | jq -r '.systemPrompt')"
     role="$(printf '%s' "$employee" | jq -r '.role')"
     department="$(printf '%s' "$employee" | jq -r '.department')"
-    printf '# %s - %s\n\nDepartment: %s\nEmployment type: %s\n\n%s\n' "$employee_name" "$role" "$department" "$employment_type" "$prompt" | write_volume_file "$workspace_volume" "AGENTS.md" 0644
+    printf '# %s - %s\n\nDepartment: %s\nEmployment type: %s\n\n%s\n\n## Company execution rules\n\n- Use company-status whenever current company evidence is required.\n- Never read, print, return, or commit credentials.\n- Repository changes must use a codex/* branch and a pull request. Never commit or push directly to main.\n- Treat the structured executor result as the durable handoff.\n' "$employee_name" "$role" "$department" "$employment_type" "$prompt" | write_volume_file "$workspace_volume" "AGENTS.md" 0644
 
     printf '%s' "$employee" | jq -c '.skills[] | select(.cacheStatus == "cached")' | while IFS= read -r skill; do
       package_ref="$(printf '%s' "$skill" | jq -r '.packageRef')"
@@ -100,7 +100,7 @@ printf '%s' "$workforce" | jq -c --arg hrm "$hrm_id" '.employees[] | select(.id 
         echo "Cached skill $folder is missing from the Training Center mount." >&2
         exit 66
       fi
-      tar -C "$source" -cf - . | docker run --rm -i --entrypoint sh --volume "$skills_volume:/target" "$base_image" -c "mkdir -p '/target/$folder' && tar -C '/target/$folder' -xf -"
+      tar -C "$source" -cf - . | docker run --rm -i --user 0 --entrypoint sh --volume "$skills_volume:/target" "$base_image" -c "mkdir -p '/target/$folder' && tar -C '/target/$folder' -xf - && chown -R 1001:1001 /target"
     done
 
     mail_secret="$state_root/$employee_id/mail-password"
@@ -111,6 +111,7 @@ printf '%s' "$workforce" | jq -c --arg hrm "$hrm_id" '.employees[] | select(.id 
     set -- docker create --name "$container_name" \
       --label "one-man-company.employee=$employee_id" \
       --label "one-man-company.employment-type=$employment_type" \
+      --restart unless-stopped \
       --network "$company_network" \
       --add-host host.docker.internal:host-gateway \
       --env "OMC_EMPLOYEE_ID=$employee_id" \
@@ -148,5 +149,3 @@ printf '%s' "$workforce" | jq -c --arg hrm "$hrm_id" '.employees[] | select(.id 
     report_runtime "$employee_id" "not_found" "The HR Manager did not find the requested employee container." "missing"
   fi
 done
-
-echo "HR Manager reconciliation complete."

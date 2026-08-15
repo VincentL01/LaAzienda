@@ -8,27 +8,36 @@ This is an original implementation inspired by the operating-system ideas in [1m
 
 - Cloudflare D1 is the source of truth for employees, system prompts, policies, skill assignments, projects, tasks, contractor handoffs, company knowledge, animation mappings, requested runtime state, observed Docker state, mail, and the activity feed.
 - Aurelia is the founding HR Manager and sole Docker provisioner, using the owner-provided Aurelia Executive character. Dorothy is the Crimson Executive secretary and has company-wide read-only access.
+- The control room has a six-zone live office. Employees move between the main office, planning room, review lab, support bay, pantry, and lobby from durable employee/run state; selecting a sprite opens the same evidence drawer Dorothy uses.
 - `/company` shows the common Codex base image as character stats, defines Executive/Expert/Contractor roles, records planned public projects, retains company knowledge, and provides the Stalwart-backed coordination outbox.
 - `/employees` enforces role policies during onboarding. Experts receive a persistent workspace and random unreserved character; Contractors receive Solaire, a generated Medieval name, task-scoped authority, and a mandatory closeout handoff. A Codex Pet ZIP can be validated and imported without leaving the desk.
 - `/training` accepts an approved package reference or constrained `npx skills add ...` command and records reviewed skill/character cache state. Official Microsoft skill requests seed the Microsoft Expert curriculum.
 - `training-center/` provides trusted local discovery/import scripts. Imported skills are cached once, then copied into each assigned employee workspace.
-- `runtime/` provides a shared Codex base image plus an HRM extension. The host bootstrap can start only Aurelia; Aurelia alone holds the Docker socket and reconciles every other employee container.
+- `runtime/` provides a shared Codex base image plus an HRM extension. The loopback-only portal container starts Aurelia; Aurelia alone holds the Docker socket, reconciles every other employee container, claims durable jobs, records safe Codex JSONL events, retries transient failures, and requires structured handoffs.
 - `infrastructure/mail/` runs a pinned Stalwart service on the machine. D1 stores company addresses and delivery evidence; mailbox passwords remain in ignored local runtime state.
 - Docker observations map to employee status through replay-safe runtime event IDs. A start request never masquerades as an observed running container.
 - `/animations` maps every employee status to a Codex Pet track and frame speed.
 
-Agent task execution is deliberately not claimed yet. A provisioned container remains idle until the executor milestone invokes `codex exec` for an approved task. A queued company message is likewise not shown as sent until the local mail bridge reports that Stalwart accepted it.
+A queued task is not shown as active until Aurelia claims it and invokes `codex exec` inside the assigned employee container. Completion requires the declared output schema and moves work to CEO review; no scripted output is accepted as execution evidence. A queued company message is likewise not shown as sent until the local mail bridge reports that Stalwart accepted it.
 
 ## Run locally
 
-Prerequisite: Node.js 22.13 or newer.
+Prerequisite: Docker Desktop. Start the complete loopback-only company with:
+
+```powershell
+.\runtime\Start-Company.ps1 -BuildImages
+```
+
+Open `http://localhost:3000`. The portal, D1 state, Aurelia dispatcher, and approved employee containers use Docker restart policies and remain available after the script exits.
+
+For portal-only development, use Node.js 22.13 or newer:
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`. Local development uses a project-local D1 database.
+Local development uses a project-local D1 database.
 
 Useful checks:
 
@@ -45,8 +54,8 @@ npm test
 2. Review its source and run `training-center/Import-Skill.ps1` on the trusted host.
 3. Confirm the cache in the UI. Only cached skills appear in onboarding.
 4. In `/employees`, create the employee brain and assign cached skills and a cached character. You can also choose a ZIP containing root-level `pet.json` and `spritesheet.webp` or `spritesheet.png`; a successful import is selected immediately.
-5. Request a container start, then run `runtime/bridge.ps1 -BuildImage` on the trusted Docker host.
-6. The host bootstraps Aurelia. HRM materializes each approved employee's `AGENTS.md`, copies only assigned skill folders, starts or stops the container, and reports observed Docker state.
+5. Request a container start, then run `runtime/Start-Company.ps1 -BuildImages` on the trusted Docker host.
+6. The host bootstraps Aurelia. HRM materializes each approved employee's `AGENTS.md`, copies only assigned skill folders, starts or stops the container, reports observed Docker state, and dispatches approved jobs.
 
 ## Company mail loop
 
@@ -65,6 +74,8 @@ The owner-provided `assets/agent_auth/auth.json` is ignored by Git and never cop
 An optional fine-grained GitHub token at `assets/github_auth/token` is also ignored and is mounted only into Project Manager containers. A portal project record plans a public repository under `VincentL01`; it does not use the credential or create the repository by itself.
 
 This session-file transplant is a user-requested compatibility mechanism, not a documented Codex authentication API. For production automation, prefer the documented [Codex non-interactive authentication](https://learn.chatgpt.com/docs/non-interactive-mode).
+
+Copied ChatGPT session files can require a fresh owner login when their refresh token has already been consumed. The dispatcher classifies that condition as `authentication_required`, stops automatic retries, and exposes it in the employee inspector instead of claiming the task ran.
 
 Codex officially loads repository skills from `.agents/skills`; employee containers use that location after copying assignments from the Training Center cache. See [Codex skills](https://learn.chatgpt.com/docs/build-skills) and [AGENTS.md guidance](https://learn.chatgpt.com/docs/agent-configuration/agents-md).
 

@@ -9,7 +9,10 @@ RUN apt-get update \
   && chown -R codex:codex /workspace /opt/assigned-skills /home/codex/.codex
 
 COPY entrypoint.sh /usr/local/bin/agent-entrypoint
-RUN chmod 0755 /usr/local/bin/agent-entrypoint
+COPY run-task.sh /usr/local/bin/run-company-task
+COPY company-status.sh /usr/local/bin/company-status
+COPY run-result.schema.json /opt/one-man-company/run-result.schema.json
+RUN chmod 0755 /usr/local/bin/agent-entrypoint /usr/local/bin/run-company-task /usr/local/bin/company-status
 
 USER codex
 ENV HOME=/home/codex

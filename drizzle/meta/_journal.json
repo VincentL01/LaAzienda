@@ -29,6 +29,20 @@
       "when": 1786735368595,
       "tag": "0003_perpetual_stick",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1786768996481,
+      "tag": "0004_nasty_pretty_boy",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786770464541,
+      "tag": "0005_tiny_khan",
+      "breakpoints": true
     }
   ]
 }

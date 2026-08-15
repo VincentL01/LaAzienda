@@ -10,6 +10,8 @@ export const employmentTypes = ["executive", "expert", "contractor"] as const;
 export const workspacePolicies = ["persistent", "task-scoped"] as const;
 export const resourceAccessPolicies = ["read-all", "docker-provisioner", "project-write", "task-scoped"] as const;
 export const petPolicies = ["fixed", "random"] as const;
+export const agentRunStatuses = ["claimed", "running", "completed", "needs_input", "failed"] as const;
+export const secretaryInquiryStatuses = ["queued", "running", "answered", "failed"] as const;
 
 export type EmployeeStatus = (typeof employeeStatuses)[number];
 export type TaskStatus = (typeof taskStatuses)[number];
@@ -23,6 +25,8 @@ export type EmploymentType = (typeof employmentTypes)[number];
 export type WorkspacePolicy = (typeof workspacePolicies)[number];
 export type ResourceAccessPolicy = (typeof resourceAccessPolicies)[number];
 export type PetPolicy = (typeof petPolicies)[number];
+export type AgentRunStatus = (typeof agentRunStatuses)[number];
+export type SecretaryInquiryStatus = (typeof secretaryInquiryStatuses)[number];
 
 export interface Employee {
   id: string; name: string; role: string; department: string; status: EmployeeStatus;
@@ -122,9 +126,30 @@ export interface ActivityItem {
   id: number; message: string; tone: string; createdAt: string;
 }
 
+export interface AgentRun {
+  id: string; jobType: "task" | "secretary-inquiry"; jobId: string;
+  taskId: string | null; employeeId: string; status: AgentRunStatus; attempt: number;
+  workerId: string; promptSummary: string; lastEvent: string;
+  resultSummary: string; deliverables: string[]; decisions: string[];
+  followUp: string[]; knowledge: string; error: string | null; threadId: string | null;
+  leaseExpiresAt: string | null; heartbeatAt: string | null; startedAt: string | null;
+  finishedAt: string | null; createdAt: string; updatedAt: string;
+}
+
+export interface AgentRunEvent {
+  id: number; eventKey: string; runId: string; employeeId: string;
+  eventType: string; message: string; createdAt: string;
+}
+
+export interface SecretaryInquiry {
+  id: string; question: string; status: SecretaryInquiryStatus; answer: string;
+  runId: string | null; createdAt: string; answeredAt: string | null; updatedAt: string;
+}
+
 export interface CompanyState {
   employees: Employee[]; tasks: CompanyTask[]; mappings: AnimationMapping[]; activity: ActivityItem[];
   projects: CompanyProject[]; knowledge: KnowledgeEntry[]; handoffs: ContractorHandoff[];
+  runs: AgentRun[]; runEvents: AgentRunEvent[]; secretaryInquiries: SecretaryInquiry[];
 }
 
 export const spriteTracks: Record<AnimationState, { row: number; frames: number; label: string }> = {
@@ -152,7 +177,7 @@ export const runtimeStatusLabels: Record<RuntimeStatus, string> = {
 
 export function mapDockerStatus(status: RuntimeStatus, current: EmployeeStatus): EmployeeStatus {
   if (status === "running") {
-    return ["planning", "working", "waiting", "review", "done"].includes(current) ? current : "idle";
+    return ["planning", "working", "waiting", "review", "done", "failed"].includes(current) ? current : "idle";
   }
   if (status === "created" || status === "restarting") return "starting";
   if (status === "paused") return "waiting";

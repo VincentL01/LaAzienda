@@ -4,7 +4,7 @@
 
 `CEO objective -> Project Manager brief -> owned task -> HRM-provisioned Codex employee -> evidence/review -> contractor handoff -> approved company knowledge -> shipped`
 
-The current vertical slice reaches durable project/task ownership, employee policy, real container provisioning, company mail, contractor handoff, and knowledge retention. It deliberately stops before automatically invoking `codex exec`, so the portal never presents placeholder output as agent work.
+The current vertical slice reaches durable project/task ownership, employee policy, real container provisioning, serialized `codex exec` dispatch, live run evidence, Secretary briefings, company mail, contractor handoff, and knowledge retention. The portal never presents placeholder output as agent work.
 
 ## Control plane and the sole socket holder
 
@@ -18,7 +18,8 @@ flowchart LR
   D1 --> Host["Minimal host bootstrap"]
   Host --> HRM["Aurelia / HRM container"]
   Socket["Docker socket"] --> HRM
-  HRM --> Employees["Employees / no socket"]
+  HRM --> Executor["Lease + safe JSONL event dispatcher"]
+  Executor --> Employees["Employees / no socket"]
   Cache["Reviewed Training Center"] --> HRM
   Auth["Auth-only source mount"] --> Employees
   D1 --> MailBridge["Mail bridge"]
@@ -27,7 +28,7 @@ flowchart LR
   Employees --> D1
 ```
 
-The bootstrap and HRM both fail closed if D1 reports any second socket holder. Runtime events use replay-safe keys. A requested start is never displayed as an observed running container.
+The bootstrap and HRM both fail closed if D1 reports any second socket holder. Runtime and run events use replay-safe keys. A requested start is never displayed as an observed running container. The loop runs one job at a time, heartbeats a two-minute lease, retries transient failures up to three times per execution cycle, and pauses immediately for owner authentication.
 
 ## Employee archetypes
 
@@ -55,6 +56,8 @@ An optional fine-grained GitHub token is also excluded. It is mounted only into 
 
 Dorothy can read company records, mail, runtime observations, projects, and knowledge, but the API refuses to use her as a mail sender or task owner. Her prompt forbids mutations.
 
+Secretary inquiries are durable jobs assigned only to Dorothy's running container. `company-status` retrieves the same D1 snapshot used by the CEO's employee inspector, so her answer can name the accountable employee, current task/run, heartbeat, and missing or stale evidence.
+
 ## Separate state contracts
 
 - Task state: `queued`, `working`, `review`, `done`.
@@ -76,8 +79,8 @@ The pinned Stalwart container persists configuration and mail data in named Dock
 
 ## Next vertical slice
 
-1. Add an executor that claims one approved task or message and invokes `codex exec` inside the assigned running container.
+1. Replace the compatibility `auth.json` copy with a managed per-employee authentication and rotation contract.
 2. Let Project Managers create an approved public repository, report its URL, and dispatch repository-specific work.
-3. Add correlated progress, waiting, review, completion, and failure events with artifact evidence.
+3. Attach validated artifacts, commits, checks, and pull-request URLs to run evidence.
 4. Archive a completed Contractor workspace only after its accepted handoff, then stop/remove the container safely.
 5. Add meetings, approval gates, performance reviews/coaching, cost accounting, retrospectives, and SOP promotion as real records rather than simulated UI.

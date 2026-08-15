@@ -18,6 +18,7 @@ $baseImage = "one-man-company/codex-employee:local"
 $hrmImage = "one-man-company/hr-manager:local"
 $companyNetwork = "one-man-company"
 $hrmContainer = "omc-hrm"
+$runtimeVersion = "4"
 $controlUri = [Uri]$ControlUrl
 $insideControlUrl = if ($ContainerControlUrl) { $ContainerControlUrl.TrimEnd('/') } else { "$($controlUri.Scheme)://host.docker.internal:$($controlUri.Port)" }
 
@@ -92,14 +93,27 @@ function Send-HrmRuntimeEvent([string]$RuntimeStatus, [string]$Detail, [string]$
 
 $hrmId = & docker container ls --all --filter "name=^$hrmContainer$" --format "{{.ID}}"
 $hrmExists = [bool]$hrmId
+if ($hrmExists) {
+  $hrmLabels = (& docker container inspect --format "{{json .Config.Labels}}" $hrmContainer | ConvertFrom-Json)
+  $existingVersion = [string]$hrmLabels.'one-man-company.runtime-version'
+  if ($BuildImage -or $existingVersion -ne $runtimeVersion) {
+    & docker container rm --force $hrmContainer | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "The obsolete HR Manager container could not be replaced." }
+    $hrmExists = $false
+  }
+}
 if ($hrm.desiredRuntimeStatus -eq "running" -and -not $hrmExists) {
   $createArgs = @(
     "create", "--name", $hrmContainer,
     "--label", "one-man-company.employee=$($hrm.id)",
     "--label", "one-man-company.docker-socket-holder=true",
+    "--label", "one-man-company.runtime-version=$runtimeVersion",
+    "--restart", "unless-stopped",
     "--network", $companyNetwork,
+    "--group-add", "0",
     "--add-host", "host.docker.internal:host-gateway",
     "--env", "OMC_EMPLOYEE_ID=$($hrm.id)",
+    "--env", "OMC_WORKER_ID=$hrmContainer",
     "--env", "OMC_CONTROL_URL=$insideControlUrl",
     "--env", "OMC_BASE_IMAGE=$baseImage",
     "--env", "OMC_DOCKER_NETWORK=$companyNetwork",
@@ -130,12 +144,8 @@ if ($hrmExists) {
   $hrmStatus = (& docker container inspect --format "{{.State.Status}}" $hrmContainer).Trim()
   $identity = (& docker container inspect --format "{{.State.StartedAt}}-{{.State.FinishedAt}}" $hrmContainer).Trim()
   Send-HrmRuntimeEvent $hrmStatus "Docker state observed by the minimal host bootstrap." $identity
-  if ($hrmStatus -eq "running") {
-    & docker exec $hrmContainer /opt/one-man-company/reconcile
-    if ($LASTEXITCODE -ne 0) { throw "The HR Manager could not reconcile employee containers." }
-  }
 } elseif ($hrm.runtimeStatus -ne "not_provisioned") {
   Send-HrmRuntimeEvent "not_found" "The HR Manager container was not found by the host bootstrap." (Get-Date -Format "yyyyMMddHH")
 }
 
-Write-Output "HR Manager bootstrap and reconciliation complete."
+Write-Output "HR Manager bootstrap complete; its private reconciliation loop is active."

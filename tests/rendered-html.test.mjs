@@ -38,23 +38,32 @@ test("server-renders company, employee, and Training Center shells", async () =>
   assert.match(await trainingResponse.text(), /Unlocking the Training Center/);
 });
 
-test("keeps runtime, credential, and mail boundaries explicit", async () => {
-  const [page, layout, packageJson, hosting, gitignore, dockerfile, hrmDockerfile, hrmReconcile, runtimeBridge, mailCompose, mailBridge] = await Promise.all([
+test("keeps runtime, credential, execution, and mail boundaries explicit", async () => {
+  const [page, layout, dashboard, packageJson, hosting, gitignore, dockerfile, taskRunner, hrmDockerfile, hrmReconcile, companyLoop, runtimeBridge, startCompany, viteConfig, executorRoute, mailCompose, mailBridge] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/CompanyDashboard.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
     readFile(new URL("../.gitignore", import.meta.url), "utf8"),
     readFile(new URL("../runtime/agent/Dockerfile", import.meta.url), "utf8"),
+    readFile(new URL("../runtime/agent/run-task.sh", import.meta.url), "utf8"),
     readFile(new URL("../runtime/hrm/Dockerfile", import.meta.url), "utf8"),
     readFile(new URL("../runtime/hrm/reconcile.sh", import.meta.url), "utf8"),
+    readFile(new URL("../runtime/hrm/company-loop.sh", import.meta.url), "utf8"),
     readFile(new URL("../runtime/bridge.ps1", import.meta.url), "utf8"),
+    readFile(new URL("../runtime/Start-Company.ps1", import.meta.url), "utf8"),
+    readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/executor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../infrastructure/mail/compose.yml", import.meta.url), "utf8"),
     readFile(new URL("../infrastructure/mail/bridge.ps1", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /CompanyDashboard/);
   assert.match(layout, /One Man Company/);
+  assert.match(dashboard, /LiveOffice/);
+  assert.match(dashboard, /EmployeeInspector/);
+  assert.match(dashboard, /Ask Dorothy/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   assert.match(hosting, /"d1": "DB"/);
   assert.match(hosting, /"r2": "CHARACTERS"/);
@@ -63,12 +72,27 @@ test("keeps runtime, credential, and mail boundaries explicit", async () => {
   assert.doesNotMatch(dockerfile, /auth\.json|agent_auth/i);
   assert.doesNotMatch(dockerfile, /docker.sock|\/usr\/local\/bin\/docker/);
   assert.match(dockerfile, /@openai\/codex/);
+  assert.match(taskRunner, /codex exec/);
+  assert.match(taskRunner, /--sandbox "\$sandbox"/);
+  assert.match(taskRunner, /--output-schema/);
   assert.match(hrmDockerfile, /FROM one-man-company\/codex-employee:local/);
   assert.match(hrmDockerfile, /docker:28-cli/);
   assert.match(hrmReconcile, /dockerSocketAccess == true/);
   assert.match(hrmReconcile, /Docker state observed and reported by the HR Manager/);
+  assert.match(companyLoop, /api\/executor/);
+  assert.match(companyLoop, /heartbeat/);
+  assert.match(companyLoop, /authentication_required/);
+  assert.doesNotMatch(companyLoop, /auth\.json|github_token/);
   assert.match(runtimeBridge, /employee-hrm/);
+  assert.match(runtimeBridge, /"--group-add", "0"/);
   assert.doesNotMatch(runtimeBridge, /foreach \(\$employee in \$workforce\.employees\)/);
+  assert.match(executorRoute, /idx_agent_runs_active_job|INSERT OR IGNORE INTO agent_runs/);
+  assert.match(executorRoute, /execution_cycle/);
+  assert.match(executorRoute, /Codex authentication needs to be refreshed by the CEO/);
+  assert.match(executorRoute, /docker-provisioner/);
+  assert.match(startCompany, /127\.0\.0\.1:3000:3000/);
+  assert.match(startCompany, /RUNTIME_BRIDGE_TOKEN/);
+  assert.match(viteConfig, /allowedHosts: \["omc-portal"\]/);
   assert.match(mailCompose, /stalwartlabs\/stalwart:v0\.16/);
   assert.match(mailCompose, /127\.0\.0\.1:2525:25/);
   assert.match(mailBridge, /reportDelivery/);

@@ -3,6 +3,7 @@ import { access } from "node:fs/promises";
 import test from "node:test";
 import { strToU8, zipSync } from "fflate";
 import { unpackCharacterZip } from "../lib/character-package.ts";
+import { mapDockerStatus } from "../lib/company.ts";
 
 function pngHeader(width, height) {
   const bytes = new Uint8Array(24);
@@ -40,10 +41,13 @@ test("rejects traversal paths and incorrect atlas dimensions", () => {
   assert.throws(() => unpackCharacterZip(wrongSize), /1536 x 1872/);
 });
 
-test("ships the fixed HRM, secretary, and contractor sprites unchanged as static packs", async () => {
-  await Promise.all(["aurelia-executive-04", "crimson-executive", "solaire"].flatMap((id) => [
-    access(new URL(`../assets/characters/${id}/pet.json`, import.meta.url)),
-    access(new URL(`../assets/characters/${id}/spritesheet.webp`, import.meta.url)),
+test("ships the fixed HRM, secretary, and contractor sprites as public runtime assets", async () => {
+  await Promise.all(["aurelia-executive-04", "crimson-executive", "solaire"].map((id) =>
     access(new URL(`../public/characters/${id}/spritesheet.webp`, import.meta.url)),
-  ]));
+  ));
+});
+
+test("keeps a running container's job blocker visible", () => {
+  assert.equal(mapDockerStatus("running", "failed"), "failed");
+  assert.equal(mapDockerStatus("running", "working"), "working");
 });

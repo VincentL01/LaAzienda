@@ -22,11 +22,13 @@ Skills are copied from the reviewed Training Center cache into an employee-speci
 
 `assets/agent_auth/auth.json` is ignored by Git and never copied into an image. The bootstrap exposes it through an auth-only source container. The base entrypoint copies it to `$CODEX_HOME/auth.json` with mode `0600`. The file is never printed by these scripts.
 
-An optional `assets/github_auth/token` is also ignored. Only Project Manager containers receive its source mount; each task runner loads it directly as `GH_TOKEN` without printing it. Recording a project in the portal does not create its repository; a PM may create the approved public `VincentL01` repository only when an executor is authorized to run that side effect.
+An optional `assets/github_auth/token` is also ignored. `runtime/Import-GitHubCredential.ps1` safely imports the existing `VincentL01` Git Credential Manager identity and refuses to write unless the destination is ignored. Only Project Manager containers receive its versioned source mount; each task runner loads it directly as `GH_TOKEN` without printing it. Recording a project in the portal does not create its repository; a PM may create the approved public `VincentL01` repository only when an executor is authorized to run that side effect.
 
 This `auth.json` transplant is a user-requested compatibility mechanism, not a documented Codex authentication API. Production automation should use a documented API-key or managed access-token flow with explicit rotation and revocation.
 
 If Codex reports that the copied ChatGPT refresh token was already used, replace and save the ignored source file with a freshly authenticated owner session. Aurelia checks its SHA-256 fingerprint every five seconds, recreates employee containers whose fingerprint changed, and automatically requeues only jobs whose latest failure was `authentication_required`. Persistent workspace, skill, and secret volumes survive the container replacement. No restart is normally required; rerun `runtime/Start-Company.ps1` only if Docker Desktop does not expose the changed bind-mounted file.
+
+The runner enables `sandbox_workspace_write.network_access` only when HRM has provisioned a Project Manager with `project-write` policy. A retry carries the previous run ID as its workspace ID, preserving existing commits and delivery worktrees while a GitHub blocker is repaired.
 
 ## Start the company
 

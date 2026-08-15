@@ -131,7 +131,9 @@ while true; do
       failure_code="result_invalid"
     elif grep -Eqi 'access token could not be refreshed|log in again|authentication required' "$error_file"; then
       failure_code="authentication_required"
-    elif grep -Eqi 'repository not found|could not resolve host|failed to clone|authentication failed for.*github' "$error_file"; then
+    elif grep -Eqi 'GitHub credential is not configured|could not read Username.*github|authentication failed for.*github|gh auth login' "$error_file"; then
+      failure_code="github_authentication_required"
+    elif grep -Eqi 'repository not found|could not resolve host|failed to clone' "$error_file"; then
       failure_code="repository_unavailable"
     fi
     fail_payload="$(jq -nc --arg action fail --arg workerId "$worker_id" --arg runId "$run_id" --arg failureCode "$failure_code" '{action:$action,workerId:$workerId,runId:$runId,failureCode:$failureCode}')"

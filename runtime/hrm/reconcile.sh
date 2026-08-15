@@ -6,10 +6,12 @@ hrm_id="${OMC_EMPLOYEE_ID:-employee-hrm}"
 base_image="${OMC_BASE_IMAGE:-one-man-company/codex-employee:local}"
 base_image_id="${OMC_BASE_IMAGE_ID:-}"
 auth_version="${OMC_AUTH_VERSION:-}"
+github_auth_version="${OMC_GITHUB_AUTH_VERSION:-missing}"
 company_network="${OMC_DOCKER_NETWORK:-one-man-company}"
 training_root="${OMC_TRAINING_ROOT:-/company/training-cache}"
 state_root="${OMC_STATE_ROOT:-/company/state}"
 auth_marker="/workspace/.company/auth-version"
+github_auth_marker="/workspace/.company/github-auth-version"
 
 if [ ! -S /var/run/docker.sock ]; then
   echo "HRM cannot reconcile employees because the Docker socket is unavailable." >&2
@@ -79,6 +81,20 @@ else
   printf '%s\n' "$auth_version" > "$auth_marker"
   auth_changed=false
 fi
+case "$github_auth_version" in
+  missing) ;;
+  *[!0-9a-f]*|'') echo "HRM received an invalid GitHub authentication fingerprint." >&2; exit 78 ;;
+esac
+if [ "$github_auth_version" != "missing" ] && [ "${#github_auth_version}" -ne 64 ]; then
+  echo "HRM received an invalid GitHub authentication fingerprint." >&2
+  exit 78
+fi
+if [ -f "$github_auth_marker" ]; then
+  previous_github_auth_version="$(cat "$github_auth_marker")"
+  if [ "$previous_github_auth_version" != "$github_auth_version" ]; then github_auth_changed=true; else github_auth_changed=false; fi
+else
+  github_auth_changed=true
+fi
 
 workforce="$(api_get "$control_url/api/employees")"
 violations="$(printf '%s' "$workforce" | jq -r --arg hrm "$hrm_id" '.employees[] | select(.dockerSocketAccess == true and .id != $hrm) | .id')"
@@ -94,6 +110,9 @@ printf '%s' "$workforce" | jq -c --arg hrm "$hrm_id" '.employees[] | select(.id 
   desired="$(printf '%s' "$employee" | jq -r '.desiredRuntimeStatus')"
   employment_type="$(printf '%s' "$employee" | jq -r '.employmentType')"
   role_profile="$(printf '%s' "$employee" | jq -r '.roleProfileId // ""')"
+  resource_access="$(printf '%s' "$employee" | jq -r '.resourceAccess // "assigned-only"')"
+  repository_write=false
+  if [ "$role_profile" = "project-manager" ] && [ "$resource_access" = "project-write" ]; then repository_write=true; fi
   safe_employee="$(safe_id "$employee_id")"
   refresh_reason=""
   runtime_detail="Docker state observed and reported by the HR Manager."
@@ -106,6 +125,7 @@ printf '%s' "$workforce" | jq -c --arg hrm "$hrm_id" '.employees[] | select(.id 
     existing_employee="$(docker container inspect --format '{{index .Config.Labels "one-man-company.employee"}}' "$container_name")"
     existing_image_id="$(docker container inspect --format '{{index .Config.Labels "one-man-company.base-image-id"}}' "$container_name")"
     existing_auth_version="$(docker container inspect --format '{{index .Config.Labels "one-man-company.auth-version"}}' "$container_name")"
+    existing_github_auth_version="$(docker container inspect --format '{{index .Config.Labels "one-man-company.github-auth-version"}}' "$container_name")"
     if [ "$existing_employee" != "$employee_id" ]; then
       echo "Refusing to replace $container_name because its employee label does not match." >&2
       continue
@@ -115,6 +135,9 @@ printf '%s' "$workforce" | jq -c --arg hrm "$hrm_id" '.employees[] | select(.id 
     fi
     if [ -n "$auth_version" ] && [ "$existing_auth_version" != "$auth_version" ]; then
       refresh_reason="authentication"
+    fi
+    if [ "$repository_write" = true ] && [ "$existing_github_auth_version" != "$github_auth_version" ]; then
+      refresh_reason="github-authentication"
     fi
     if [ -n "$refresh_reason" ]; then
       docker container rm --force "$container_name" >/dev/null
@@ -156,11 +179,13 @@ printf '%s' "$workforce" | jq -c --arg hrm "$hrm_id" '.employees[] | select(.id 
       --label "one-man-company.employment-type=$employment_type" \
       --label "one-man-company.base-image-id=$base_image_id" \
       --label "one-man-company.auth-version=$auth_version" \
+      --label "one-man-company.github-auth-version=$github_auth_version" \
       --restart unless-stopped \
       --network "$company_network" \
       --add-host host.docker.internal:host-gateway \
       --env "OMC_EMPLOYEE_ID=$employee_id" \
       --env "OMC_CONTROL_URL=$control_url" \
+      --env "OMC_REPOSITORY_WRITE=$repository_write" \
       --env "OMC_MAIL_DOMAIN=one-man-company.test" \
       --env "OMC_MAIL_ADDRESS=$(printf '%s' "$employee" | jq -r '.emailAddress // ""')" \
       --env "OMC_MAIL_SMTP_HOST=stalwart" --env "OMC_MAIL_SMTP_PORT=587" \
@@ -180,6 +205,8 @@ printf '%s' "$workforce" | jq -c --arg hrm "$hrm_id" '.employees[] | select(.id 
     exists=true
     if [ "$refresh_reason" = "authentication" ]; then
       runtime_detail="Authentication source changed; employee container recreated."
+    elif [ "$refresh_reason" = "github-authentication" ]; then
+      runtime_detail="GitHub authentication source changed; Project Manager container recreated."
     fi
   elif [ "$desired" = "running" ] && [ "$exists" = true ]; then
     current="$(docker container inspect --format '{{.State.Status}}' "$container_name")"
@@ -203,4 +230,10 @@ if [ "$auth_changed" = true ]; then
   api_post "$control_url/api/company" "$retry_payload"
   printf '%s\n' "$auth_version" > "$auth_marker"
   echo "Aurelia refreshed employee authentication and requeued authentication-blocked work."
+fi
+if [ "$github_auth_changed" = true ]; then
+  retry_payload="$(jq -nc '{action:"retryGithubAuthenticationBlocked"}')"
+  api_post "$control_url/api/company" "$retry_payload"
+  printf '%s\n' "$github_auth_version" > "$github_auth_marker"
+  echo "Aurelia refreshed Project Manager GitHub authentication and requeued GitHub-blocked work."
 fi

@@ -5,6 +5,7 @@ import { EmployeeInspector } from "./EmployeeInspector";
 import { LiveOffice } from "./LiveOffice";
 import {
   codexAuthenticationRequiredMessage,
+  githubAuthenticationRequiredMessage,
   taskStatuses,
   type CompanyState,
   type CompanyTask,
@@ -157,6 +158,8 @@ export function CompanyDashboard() {
     && company.runs.find((run) => run.taskId === task.id)?.error === codexAuthenticationRequiredMessage)
     || company.secretaryInquiries.some((inquiry) => inquiry.status === "failed"
       && company.runs.find((run) => run.jobType === "secretary-inquiry" && run.jobId === inquiry.id)?.error === codexAuthenticationRequiredMessage);
+  const githubAuthenticationBlocked = company.tasks.some((task) => task.status === "review"
+    && company.runs.find((run) => run.taskId === task.id)?.error === githubAuthenticationRequiredMessage);
 
   return (
     <main className="dashboard-shell">
@@ -201,6 +204,11 @@ export function CompanyDashboard() {
       {authenticationBlocked ? <section className="company-alert" role="status">
         <b>Codex sign-in needs CEO attention</b>
         <p>Replace the ignored <code>assets/agent_auth/auth.json</code> with a fresh authenticated session. Aurelia detects the saved file within five seconds, refreshes affected employee containers, and retries only authentication-blocked work.</p>
+      </section> : null}
+
+      {githubAuthenticationBlocked ? <section className="company-alert" role="status">
+        <b>GitHub sign-in needs CEO attention</b>
+        <p>Run <code>runtime/Import-GitHubCredential.ps1</code> on the host. It securely imports the existing VincentL01 Git Credential Manager identity, refreshes only the Project Manager credential boundary, and never exposes the credential in the portal.</p>
       </section> : null}
 
       <section className="workspace-grid">

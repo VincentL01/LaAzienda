@@ -39,7 +39,7 @@ test("server-renders company, employee, and Training Center shells", async () =>
 });
 
 test("keeps runtime, credential, execution, and mail boundaries explicit", async () => {
-  const [page, layout, dashboard, packageJson, hosting, gitignore, dockerfile, taskRunner, hrmDockerfile, hrmReconcile, companyLoop, runtimeBridge, startCompany, viteConfig, executorRoute, mailCompose, mailBridge] = await Promise.all([
+  const [page, layout, dashboard, packageJson, hosting, gitignore, dockerfile, taskRunner, hrmDockerfile, hrmReconcile, companyLoop, runtimeBridge, githubCredentialImport, startCompany, viteConfig, executorRoute, mailCompose, mailBridge] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/CompanyDashboard.tsx", import.meta.url), "utf8"),
@@ -52,6 +52,7 @@ test("keeps runtime, credential, execution, and mail boundaries explicit", async
     readFile(new URL("../runtime/hrm/reconcile.sh", import.meta.url), "utf8"),
     readFile(new URL("../runtime/hrm/company-loop.sh", import.meta.url), "utf8"),
     readFile(new URL("../runtime/bridge.ps1", import.meta.url), "utf8"),
+    readFile(new URL("../runtime/Import-GitHubCredential.ps1", import.meta.url), "utf8"),
     readFile(new URL("../runtime/Start-Company.ps1", import.meta.url), "utf8"),
     readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/executor/route.ts", import.meta.url), "utf8"),
@@ -75,6 +76,8 @@ test("keeps runtime, credential, execution, and mail boundaries explicit", async
   assert.match(taskRunner, /codex exec/);
   assert.match(taskRunner, /--sandbox "\$sandbox"/);
   assert.match(taskRunner, /--output-schema/);
+  assert.match(taskRunner, /workspaceRunId/);
+  assert.match(taskRunner, /sandbox_workspace_write\.network_access=true/);
   assert.match(hrmDockerfile, /FROM one-man-company\/codex-employee:local/);
   assert.match(hrmDockerfile, /docker:28-cli/);
   assert.match(hrmReconcile, /dockerSocketAccess == true/);
@@ -82,19 +85,28 @@ test("keeps runtime, credential, execution, and mail boundaries explicit", async
   assert.match(companyLoop, /api\/executor/);
   assert.match(companyLoop, /heartbeat/);
   assert.match(companyLoop, /authentication_required/);
+  assert.match(companyLoop, /github_authentication_required/);
   assert.doesNotMatch(companyLoop, /auth\.json|github_token/);
   assert.match(runtimeBridge, /employee-hrm/);
-  assert.match(runtimeBridge, /\$runtimeVersion = "7"/);
+  assert.match(runtimeBridge, /\$runtimeVersion = "8"/);
   assert.match(runtimeBridge, /"--group-add", "0"/);
   assert.match(runtimeBridge, /Get-FileHash/);
   assert.match(hrmReconcile, /one-man-company\.auth-version/);
+  assert.match(hrmReconcile, /one-man-company\.github-auth-version/);
+  assert.match(hrmReconcile, /OMC_REPOSITORY_WRITE/);
   assert.match(hrmReconcile, /sha256sum \/run\/secrets\/codex_auth/);
   assert.match(hrmReconcile, /retryAuthenticationBlocked/);
   assert.match(dashboard, /detects the saved file within five seconds/);
+  assert.match(dashboard, /Import-GitHubCredential\.ps1/);
+  assert.match(githubCredentialImport, /credential fill/);
+  assert.match(githubCredentialImport, /check-ignore --quiet/);
+  assert.doesNotMatch(githubCredentialImport, /Write-(?:Output|Host).*token/i);
   assert.doesNotMatch(runtimeBridge, /foreach \(\$employee in \$workforce\.employees\)/);
   assert.match(executorRoute, /idx_agent_runs_active_job|INSERT OR IGNORE INTO agent_runs/);
   assert.match(executorRoute, /execution_cycle/);
   assert.match(executorRoute, /codexAuthenticationRequiredMessage/);
+  assert.match(executorRoute, /githubAuthenticationRequiredMessage/);
+  assert.match(executorRoute, /workspaceRunId/);
   assert.match(executorRoute, /docker-provisioner/);
   assert.match(startCompany, /127\.0\.0\.1:3000:3000/);
   assert.match(startCompany, /RUNTIME_BRIDGE_TOKEN/);

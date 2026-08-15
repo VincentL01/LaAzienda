@@ -3,6 +3,7 @@ import { ensureDatabase } from "@/db/ensure";
 import {
   animationStates,
   codexAuthenticationRequiredMessage,
+  githubAuthenticationRequiredMessage,
   employeeStatuses,
   taskStatuses,
   type AnimationMapping,
@@ -293,8 +294,11 @@ export async function POST(request: Request) {
             .bind(`${employee.name} submitted an accepted handoff and returned knowledge to the company.`),
         ]);
       }
-    } else if (action === "retryAuthenticationBlocked") {
+    } else if (action === "retryAuthenticationBlocked" || action === "retryGithubAuthenticationBlocked") {
       if (!bridgeAuthorized(request)) return Response.json({ error: "Runtime bridge authorization failed" }, { status: 403 });
+      const authenticationMessage = action === "retryGithubAuthenticationBlocked"
+        ? githubAuthenticationRequiredMessage
+        : codexAuthenticationRequiredMessage;
       const blockedTasks = await d1.prepare(`SELECT tasks.id, tasks.title,
         tasks.assignee_id AS assigneeId FROM tasks
         JOIN agent_runs runs ON runs.id = (
@@ -302,7 +306,7 @@ export async function POST(request: Request) {
           ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
         )
         WHERE tasks.status = 'review' AND runs.status = 'failed' AND runs.error = ?`)
-        .bind(codexAuthenticationRequiredMessage).all<{ id: string; title: string; assigneeId: string | null }>();
+        .bind(authenticationMessage).all<{ id: string; title: string; assigneeId: string | null }>();
       const blockedInquiries = await d1.prepare(`SELECT inquiries.id FROM secretary_inquiries inquiries
         JOIN agent_runs runs ON runs.id = (
           SELECT id FROM agent_runs latest
@@ -310,7 +314,7 @@ export async function POST(request: Request) {
           ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
         )
         WHERE inquiries.status = 'failed' AND runs.status = 'failed' AND runs.error = ?`)
-        .bind(codexAuthenticationRequiredMessage).all<{ id: string }>();
+        .bind(authenticationMessage).all<{ id: string }>();
 
       const statements: D1PreparedStatement[] = [];
       for (const task of blockedTasks.results) {
@@ -334,7 +338,7 @@ export async function POST(request: Request) {
       const retried = blockedTasks.results.length + blockedInquiries.results.length;
       if (retried > 0) {
         statements.push(d1.prepare("INSERT INTO activity (message, tone) VALUES (?, 'planning')")
-          .bind(`Aurelia detected refreshed Codex authentication and returned ${retried} blocked ${retried === 1 ? "job" : "jobs"} to the execution queue.`));
+          .bind(`Aurelia detected refreshed ${action === "retryGithubAuthenticationBlocked" ? "GitHub" : "Codex"} authentication and returned ${retried} blocked ${retried === 1 ? "job" : "jobs"} to the execution queue.`));
       }
       if (statements.length > 0) await d1.batch(statements);
     } else if (action === "retryTask") {

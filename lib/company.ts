@@ -13,6 +13,7 @@ export const petPolicies = ["fixed", "random"] as const;
 export const agentRunStatuses = ["claimed", "running", "completed", "needs_input", "failed"] as const;
 export const secretaryInquiryStatuses = ["queued", "running", "answered", "failed"] as const;
 export const codexAuthenticationRequiredMessage = "Codex authentication needs to be refreshed by the CEO.";
+export const githubAuthenticationRequiredMessage = "GitHub authentication needs to be configured by the CEO.";
 
 export type EmployeeStatus = (typeof employeeStatuses)[number];
 export type TaskStatus = (typeof taskStatuses)[number];

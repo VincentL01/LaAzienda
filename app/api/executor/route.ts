@@ -1,12 +1,13 @@
 import { env } from "cloudflare:workers";
 import { ensureDatabase } from "@/db/ensure";
-import { codexAuthenticationRequiredMessage } from "@/lib/company";
+import { codexAuthenticationRequiredMessage, githubAuthenticationRequiredMessage } from "@/lib/company";
 import { bridgeAuthorized } from "@/lib/server/bridge-auth";
 
 const MAX_ATTEMPTS = 3;
 const ACTIVE_RUNS = "('claimed', 'running')";
 const failureMessages = {
   authentication_required: codexAuthenticationRequiredMessage,
+  github_authentication_required: githubAuthenticationRequiredMessage,
   repository_unavailable: "The approved repository could not be prepared for this run.",
   result_invalid: "Codex finished without a valid structured handoff.",
   execution_failed: "Codex execution failed.",
@@ -21,6 +22,7 @@ type ClaimedJob = {
   containerName: string;
   sandbox: "read-only" | "workspace-write";
   repositoryUrl: string | null;
+  workspaceRunId: string;
   prompt: string;
 };
 
@@ -125,6 +127,7 @@ async function claimSecretaryInquiry(workerId: string): Promise<ClaimedJob | nul
     containerName: inquiry.containerName,
     sandbox: "read-only",
     repositoryUrl: null,
+    workspaceRunId: runId,
     prompt: `Answer the CEO's question using only fresh company evidence. Run company-status before answering.\n\nQuestion: ${inquiry.question}\n\nState what is happening now, cite the responsible employee and task or run, call out stale or missing evidence, and give the next concrete checkpoint. Do not mutate any company resource and never include credentials or secret values.`,
   };
 }
@@ -135,7 +138,11 @@ async function claimTask(workerId: string): Promise<ClaimedJob | null> {
     tasks.execution_cycle AS executionCycle,
     employees.id AS employeeId, employees.name AS employeeName, employees.container_name AS containerName,
     employees.employment_type AS employmentType, employees.role, projects.name AS projectName,
-    projects.brief AS projectBrief, projects.repository_url AS repositoryUrl
+    projects.brief AS projectBrief, projects.repository_url AS repositoryUrl,
+    (SELECT id FROM agent_runs latest WHERE latest.task_id = tasks.id
+      ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1) AS workspaceRunId,
+    (SELECT result_summary FROM agent_runs latest WHERE latest.task_id = tasks.id
+      ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1) AS previousResultSummary
     FROM tasks JOIN employees ON employees.id = tasks.assignee_id
     LEFT JOIN projects ON projects.id = tasks.project_id
     WHERE tasks.status = 'queued' AND employees.resource_access NOT IN ('read-all', 'docker-provisioner')
@@ -147,6 +154,7 @@ async function claimTask(workerId: string): Promise<ClaimedJob | null> {
         id: string; title: string; brief: string; handoffRequired: number; executionCycle: number; employeeId: string;
         employeeName: string; containerName: string | null; employmentType: string; role: string;
         projectName: string | null; projectBrief: string | null; repositoryUrl: string | null;
+        workspaceRunId: string | null; previousResultSummary: string | null;
       }>();
   if (!task?.containerName) return null;
 
@@ -177,6 +185,9 @@ async function claimTask(workerId: string): Promise<ClaimedJob | null> {
   const handoff = task.handoffRequired
     ? "This is contractor work. Your final structured result must include concrete deliverables, decisions, follow-up, and reusable knowledge for the mandatory handoff."
     : "Return concrete evidence, decisions, follow-up work, and reusable knowledge in the final structured result.";
+  const previousWork = task.workspaceRunId
+    ? `Resume the existing task workspace from the previous run. Preserve and inspect its commits and uncommitted work before continuing. Previous handoff: ${task.previousResultSummary ?? "No structured handoff was recorded."}`
+    : "This is the first run for this task; initialize the isolated workspace normally.";
 
   return {
     runId,
@@ -187,7 +198,8 @@ async function claimTask(workerId: string): Promise<ClaimedJob | null> {
     containerName: task.containerName,
     sandbox: "workspace-write",
     repositoryUrl: task.repositoryUrl,
-    prompt: `Execute this approved company task as ${task.employeeName}, ${task.role}.\n\nTask: ${task.title}\nBrief: ${task.brief || "No additional brief was supplied."}\n${projectContext}\n\n${handoff}\n\nRepository rule: make changes only on a codex/* branch and use a pull request; never commit or push directly to main. Work autonomously within the stated scope, validate in proportion to risk, and never print or return credentials. If authority or required context is missing, return needs_input with the exact blocker instead of inventing completion.`,
+    workspaceRunId: task.workspaceRunId ?? runId,
+    prompt: `Execute this approved company task as ${task.employeeName}, ${task.role}.\n\nTask: ${task.title}\nBrief: ${task.brief || "No additional brief was supplied."}\n${projectContext}\n\n${previousWork}\n\n${handoff}\n\nRepository rule: make changes only on a codex/* branch and use a pull request; never commit or push directly to main. Work autonomously within the stated scope, validate in proportion to risk, and never print or return credentials. If authority or required context is missing, return needs_input with the exact blocker instead of inventing completion.`,
   };
 }
 
@@ -310,7 +322,7 @@ export async function POST(request: Request) {
       const requestedFailure = cleanText(body.failureCode, 80) as keyof typeof failureMessages;
       const failureCode = requestedFailure in failureMessages ? requestedFailure : "execution_failed";
       const failureMessage = failureMessages[failureCode];
-      const needsOwner = failureCode === "authentication_required";
+      const needsOwner = failureCode === "authentication_required" || failureCode === "github_authentication_required";
       const exhausted = needsOwner || run.attempt >= MAX_ATTEMPTS;
       const statements = [
         d1.prepare(`UPDATE agent_runs SET status = 'failed', error = ?,
@@ -320,7 +332,8 @@ export async function POST(request: Request) {
         d1.prepare("UPDATE employees SET status = ?, current_task_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
           .bind(exhausted ? "failed" : "waiting", run.employeeId),
         d1.prepare("INSERT INTO activity (message, tone) VALUES (?, 'failed')")
-          .bind(needsOwner ? "Agent execution paused because Codex authentication requires CEO attention."
+          .bind(failureCode === "authentication_required" ? "Agent execution paused because Codex authentication requires CEO attention."
+            : failureCode === "github_authentication_required" ? "Agent execution paused because GitHub authentication requires CEO attention."
             : exhausted ? "An employee run needs human review after three attempts."
               : "An employee run failed and will be retried."),
       ];

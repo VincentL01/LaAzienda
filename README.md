@@ -71,13 +71,15 @@ The Stalwart container and each employee container join the external Docker netw
 
 The owner-provided `assets/agent_auth/auth.json` is ignored by Git and never copied into a Docker image. The runtime mounts it read-only and copies it to the container user's `.codex/auth.json` with mode `0600` at startup. The file's contents must never be logged or displayed.
 
-An optional fine-grained GitHub token at `assets/github_auth/token` is also ignored and is mounted only into Project Manager containers. A portal project record plans a public repository under `VincentL01`; it does not use the credential or create the repository by itself.
+An optional fine-grained GitHub token at `assets/github_auth/token` is also ignored and is mounted only into Project Manager containers. Run `runtime/Import-GitHubCredential.ps1` to copy the existing `VincentL01` identity from Git Credential Manager without printing it; the script refuses to write unless the destination is Git-ignored. A portal project record plans a public repository under `VincentL01`; it does not use the credential or create the repository by itself.
 
 This session-file transplant is a user-requested compatibility mechanism, not a documented Codex authentication API. For production automation, prefer the documented [Codex non-interactive authentication](https://learn.chatgpt.com/docs/non-interactive-mode).
 
 Copied ChatGPT session files can require a fresh owner login when their refresh token has already been consumed. The dispatcher classifies that condition as `authentication_required`, stops automatic retries, and exposes it in the employee inspector instead of claiming the task ran.
 
 To refresh the company, replace and save the ignored `assets/agent_auth/auth.json`. Aurelia fingerprints that mounted source every five seconds, recreates only employee containers carrying the previous fingerprint, preserves their workspace and skill volumes, and automatically requeues jobs whose latest failure was `authentication_required`. No company restart is normally required; rerun `runtime/Start-Company.ps1` only if Docker Desktop does not expose the changed bind-mounted file.
+
+Project Manager jobs receive outbound network access inside Codex's `workspace-write` sandbox so they can clone, push, and open approved `VincentL01` pull requests. Other roles remain network-disabled by default. Retried tasks reuse their prior run workspace, so a committed branch is preserved when a network or credential blocker is resolved.
 
 Codex officially loads repository skills from `.agents/skills`; employee containers use that location after copying assignments from the Training Center cache. See [Codex skills](https://learn.chatgpt.com/docs/build-skills) and [AGENTS.md guidance](https://learn.chatgpt.com/docs/agent-configuration/agents-md).
 

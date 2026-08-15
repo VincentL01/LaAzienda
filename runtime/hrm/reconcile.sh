@@ -9,6 +9,7 @@ auth_version="${OMC_AUTH_VERSION:-}"
 company_network="${OMC_DOCKER_NETWORK:-one-man-company}"
 training_root="${OMC_TRAINING_ROOT:-/company/training-cache}"
 state_root="${OMC_STATE_ROOT:-/company/state}"
+auth_marker="/workspace/.company/auth-version"
 
 if [ ! -S /var/run/docker.sock ]; then
   echo "HRM cannot reconcile employees because the Docker socket is unavailable." >&2
@@ -61,6 +62,24 @@ report_runtime() {
   api_post "$control_url/api/employees" "$payload"
 }
 
+detected_auth_version="$(sha256sum /run/secrets/codex_auth 2>/dev/null | awk '{print $1}' || true)"
+case "$detected_auth_version" in
+  ''|*[!0-9a-f]*) echo "HRM could not fingerprint the Codex authentication source." >&2; exit 78 ;;
+esac
+if [ "${#detected_auth_version}" -ne 64 ]; then
+  echo "HRM received an invalid Codex authentication fingerprint." >&2
+  exit 78
+fi
+auth_version="$detected_auth_version"
+mkdir -p "$(dirname "$auth_marker")"
+if [ -f "$auth_marker" ]; then
+  previous_auth_version="$(cat "$auth_marker")"
+  if [ "$previous_auth_version" != "$auth_version" ]; then auth_changed=true; else auth_changed=false; fi
+else
+  printf '%s\n' "$auth_version" > "$auth_marker"
+  auth_changed=false
+fi
+
 workforce="$(api_get "$control_url/api/employees")"
 violations="$(printf '%s' "$workforce" | jq -r --arg hrm "$hrm_id" '.employees[] | select(.dockerSocketAccess == true and .id != $hrm) | .id')"
 if [ -n "$violations" ]; then
@@ -76,6 +95,8 @@ printf '%s' "$workforce" | jq -c --arg hrm "$hrm_id" '.employees[] | select(.id 
   employment_type="$(printf '%s' "$employee" | jq -r '.employmentType')"
   role_profile="$(printf '%s' "$employee" | jq -r '.roleProfileId // ""')"
   safe_employee="$(safe_id "$employee_id")"
+  refresh_reason=""
+  runtime_detail="Docker state observed and reported by the HR Manager."
 
   case "$container_name" in *[!A-Za-z0-9_.-]*|'') echo "Skipping unsafe container name for $employee_name" >&2; continue ;; esac
 
@@ -89,8 +110,13 @@ printf '%s' "$workforce" | jq -c --arg hrm "$hrm_id" '.employees[] | select(.id 
       echo "Refusing to replace $container_name because its employee label does not match." >&2
       continue
     fi
-    if { [ -n "$base_image_id" ] && [ "$existing_image_id" != "$base_image_id" ]; } \
-      || { [ -n "$auth_version" ] && [ "$existing_auth_version" != "$auth_version" ]; }; then
+    if [ -n "$base_image_id" ] && [ "$existing_image_id" != "$base_image_id" ]; then
+      refresh_reason="base-image"
+    fi
+    if [ -n "$auth_version" ] && [ "$existing_auth_version" != "$auth_version" ]; then
+      refresh_reason="authentication"
+    fi
+    if [ -n "$refresh_reason" ]; then
       docker container rm --force "$container_name" >/dev/null
       exists=false
     fi
@@ -152,6 +178,9 @@ printf '%s' "$workforce" | jq -c --arg hrm "$hrm_id" '.employees[] | select(.id 
     "$@" >/dev/null
     docker start "$container_name" >/dev/null
     exists=true
+    if [ "$refresh_reason" = "authentication" ]; then
+      runtime_detail="Authentication source changed; employee container recreated."
+    fi
   elif [ "$desired" = "running" ] && [ "$exists" = true ]; then
     current="$(docker container inspect --format '{{.State.Status}}' "$container_name")"
     if [ "$current" = "exited" ] || [ "$current" = "created" ]; then docker start "$container_name" >/dev/null; fi
@@ -163,8 +192,15 @@ printf '%s' "$workforce" | jq -c --arg hrm "$hrm_id" '.employees[] | select(.id 
   if docker container inspect "$container_name" >/dev/null 2>&1; then
     runtime_status="$(docker container inspect --format '{{.State.Status}}' "$container_name")"
     identity="$(docker container inspect --format '{{.State.StartedAt}}-{{.State.FinishedAt}}' "$container_name")"
-    report_runtime "$employee_id" "$runtime_status" "Docker state observed and reported by the HR Manager." "$identity"
+    report_runtime "$employee_id" "$runtime_status" "$runtime_detail" "$identity"
   else
     report_runtime "$employee_id" "not_found" "The HR Manager did not find the requested employee container." "missing"
   fi
 done
+
+if [ "$auth_changed" = true ]; then
+  retry_payload="$(jq -nc '{action:"retryAuthenticationBlocked"}')"
+  api_post "$control_url/api/company" "$retry_payload"
+  printf '%s\n' "$auth_version" > "$auth_marker"
+  echo "Aurelia refreshed employee authentication and requeued authentication-blocked work."
+fi

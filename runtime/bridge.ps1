@@ -18,7 +18,7 @@ $baseImage = "one-man-company/codex-employee:local"
 $hrmImage = "one-man-company/hr-manager:local"
 $companyNetwork = "one-man-company"
 $hrmContainer = "omc-hrm"
-$runtimeVersion = "5"
+$runtimeVersion = "7"
 $controlUri = [Uri]$ControlUrl
 $insideControlUrl = if ($ContainerControlUrl) { $ContainerControlUrl.TrimEnd('/') } else { "$($controlUri.Scheme)://host.docker.internal:$($controlUri.Port)" }
 
@@ -100,6 +100,13 @@ if ($hrmExists) {
   $hrmLabels = (& docker container inspect --format "{{json .Config.Labels}}" $hrmContainer | ConvertFrom-Json)
   $existingVersion = [string]$hrmLabels.'one-man-company.runtime-version'
   $existingAuthVersion = [string]$hrmLabels.'one-man-company.auth-version'
+  $authMarkerDirectory = [IO.Path]::GetFullPath((Join-Path $hrmWorkspace ".company"))
+  $authMarkerPath = [IO.Path]::GetFullPath((Join-Path $authMarkerDirectory "auth-version"))
+  if (-not $authMarkerPath.StartsWith($hrmWorkspace, [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe authentication marker path." }
+  if (-not (Test-Path -LiteralPath $authMarkerPath -PathType Leaf) -and $existingAuthVersion -match '^[0-9a-f]{64}$') {
+    New-Item -ItemType Directory -Force -Path $authMarkerDirectory | Out-Null
+    [IO.File]::WriteAllText($authMarkerPath, "$existingAuthVersion`n", $utf8NoBom)
+  }
   if ($BuildImage -or $existingVersion -ne $runtimeVersion -or $existingAuthVersion -ne $authVersion) {
     & docker container rm --force $hrmContainer | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "The obsolete HR Manager container could not be replaced." }

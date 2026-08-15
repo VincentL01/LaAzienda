@@ -77,6 +77,8 @@ This session-file transplant is a user-requested compatibility mechanism, not a 
 
 Copied ChatGPT session files can require a fresh owner login when their refresh token has already been consumed. The dispatcher classifies that condition as `authentication_required`, stops automatic retries, and exposes it in the employee inspector instead of claiming the task ran.
 
+To refresh the company, replace and save the ignored `assets/agent_auth/auth.json`. Aurelia fingerprints that mounted source every five seconds, recreates only employee containers carrying the previous fingerprint, preserves their workspace and skill volumes, and automatically requeues jobs whose latest failure was `authentication_required`. No company restart is normally required; rerun `runtime/Start-Company.ps1` only if Docker Desktop does not expose the changed bind-mounted file.
+
 Codex officially loads repository skills from `.agents/skills`; employee containers use that location after copying assignments from the Training Center cache. See [Codex skills](https://learn.chatgpt.com/docs/build-skills) and [AGENTS.md guidance](https://learn.chatgpt.com/docs/agent-configuration/agents-md).
 
 ## Character packs

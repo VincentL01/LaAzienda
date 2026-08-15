@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { EmployeeInspector } from "./EmployeeInspector";
 import { LiveOffice } from "./LiveOffice";
 import {
+  codexAuthenticationRequiredMessage,
   taskStatuses,
   type CompanyState,
   type CompanyTask,
@@ -152,7 +153,10 @@ export function CompanyDashboard() {
   const taskEmployees = company.employees.filter((item) => !["read-all", "docker-provisioner"].includes(item.resourceAccess));
   const projectManagers = company.employees.filter((item) => item.roleProfileId === "project-manager");
   const selectedEmployee = company.employees.find((item) => item.id === selectedEmployeeId) ?? null;
-  const authenticationBlocked = company.runs.some((run) => run.error?.includes("authentication needs to be refreshed"));
+  const authenticationBlocked = company.tasks.some((task) => task.status === "review"
+    && company.runs.find((run) => run.taskId === task.id)?.error === codexAuthenticationRequiredMessage)
+    || company.secretaryInquiries.some((inquiry) => inquiry.status === "failed"
+      && company.runs.find((run) => run.jobType === "secretary-inquiry" && run.jobId === inquiry.id)?.error === codexAuthenticationRequiredMessage);
 
   return (
     <main className="dashboard-shell">
@@ -196,7 +200,7 @@ export function CompanyDashboard() {
 
       {authenticationBlocked ? <section className="company-alert" role="status">
         <b>Codex sign-in needs CEO attention</b>
-        <p>Replace the ignored <code>assets/agent_auth/auth.json</code> with a fresh authenticated session, then restart the company. Runs remain blocked and are never reported as completed.</p>
+        <p>Replace the ignored <code>assets/agent_auth/auth.json</code> with a fresh authenticated session. Aurelia detects the saved file within five seconds, refreshes affected employee containers, and retries only authentication-blocked work.</p>
       </section> : null}
 
       <section className="workspace-grid">

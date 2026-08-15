@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { ensureDatabase } from "@/db/ensure";
 import {
   animationStates,
+  codexAuthenticationRequiredMessage,
   employeeStatuses,
   taskStatuses,
   type AnimationMapping,
@@ -292,6 +293,50 @@ export async function POST(request: Request) {
             .bind(`${employee.name} submitted an accepted handoff and returned knowledge to the company.`),
         ]);
       }
+    } else if (action === "retryAuthenticationBlocked") {
+      if (!bridgeAuthorized(request)) return Response.json({ error: "Runtime bridge authorization failed" }, { status: 403 });
+      const blockedTasks = await d1.prepare(`SELECT tasks.id, tasks.title,
+        tasks.assignee_id AS assigneeId FROM tasks
+        JOIN agent_runs runs ON runs.id = (
+          SELECT id FROM agent_runs latest WHERE latest.task_id = tasks.id
+          ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
+        )
+        WHERE tasks.status = 'review' AND runs.status = 'failed' AND runs.error = ?`)
+        .bind(codexAuthenticationRequiredMessage).all<{ id: string; title: string; assigneeId: string | null }>();
+      const blockedInquiries = await d1.prepare(`SELECT inquiries.id FROM secretary_inquiries inquiries
+        JOIN agent_runs runs ON runs.id = (
+          SELECT id FROM agent_runs latest
+          WHERE latest.job_type = 'secretary-inquiry' AND latest.job_id = inquiries.id
+          ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
+        )
+        WHERE inquiries.status = 'failed' AND runs.status = 'failed' AND runs.error = ?`)
+        .bind(codexAuthenticationRequiredMessage).all<{ id: string }>();
+
+      const statements: D1PreparedStatement[] = [];
+      for (const task of blockedTasks.results) {
+        statements.push(
+          d1.prepare(`UPDATE tasks SET status = 'queued', execution_cycle = execution_cycle + 1,
+            updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'review'`).bind(task.id),
+        );
+        if (task.assigneeId) {
+          statements.push(d1.prepare(`UPDATE employees SET status = 'waiting', current_task_id = NULL,
+            desired_runtime_status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(task.assigneeId));
+        }
+      }
+      for (const inquiry of blockedInquiries.results) {
+        statements.push(d1.prepare(`UPDATE secretary_inquiries SET status = 'queued', run_id = NULL,
+          updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'failed'`).bind(inquiry.id));
+      }
+      if (blockedInquiries.results.length > 0) {
+        statements.push(d1.prepare(`UPDATE employees SET status = 'waiting', current_task_id = NULL,
+          desired_runtime_status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = 'employee-dorothy'`));
+      }
+      const retried = blockedTasks.results.length + blockedInquiries.results.length;
+      if (retried > 0) {
+        statements.push(d1.prepare("INSERT INTO activity (message, tone) VALUES (?, 'planning')")
+          .bind(`Aurelia detected refreshed Codex authentication and returned ${retried} blocked ${retried === 1 ? "job" : "jobs"} to the execution queue.`));
+      }
+      if (statements.length > 0) await d1.batch(statements);
     } else if (action === "retryTask") {
       const taskId = typeof body.taskId === "string" ? body.taskId : "";
       const task = await d1.prepare(`SELECT tasks.title, tasks.status, tasks.assignee_id AS assigneeId,

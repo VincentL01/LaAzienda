@@ -84,13 +84,17 @@ test("keeps runtime, credential, execution, and mail boundaries explicit", async
   assert.match(companyLoop, /authentication_required/);
   assert.doesNotMatch(companyLoop, /auth\.json|github_token/);
   assert.match(runtimeBridge, /employee-hrm/);
+  assert.match(runtimeBridge, /\$runtimeVersion = "7"/);
   assert.match(runtimeBridge, /"--group-add", "0"/);
   assert.match(runtimeBridge, /Get-FileHash/);
   assert.match(hrmReconcile, /one-man-company\.auth-version/);
+  assert.match(hrmReconcile, /sha256sum \/run\/secrets\/codex_auth/);
+  assert.match(hrmReconcile, /retryAuthenticationBlocked/);
+  assert.match(dashboard, /detects the saved file within five seconds/);
   assert.doesNotMatch(runtimeBridge, /foreach \(\$employee in \$workforce\.employees\)/);
   assert.match(executorRoute, /idx_agent_runs_active_job|INSERT OR IGNORE INTO agent_runs/);
   assert.match(executorRoute, /execution_cycle/);
-  assert.match(executorRoute, /Codex authentication needs to be refreshed by the CEO/);
+  assert.match(executorRoute, /codexAuthenticationRequiredMessage/);
   assert.match(executorRoute, /docker-provisioner/);
   assert.match(startCompany, /127\.0\.0\.1:3000:3000/);
   assert.match(startCompany, /RUNTIME_BRIDGE_TOKEN/);

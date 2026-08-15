@@ -1,11 +1,12 @@
 import { env } from "cloudflare:workers";
 import { ensureDatabase } from "@/db/ensure";
+import { codexAuthenticationRequiredMessage } from "@/lib/company";
 import { bridgeAuthorized } from "@/lib/server/bridge-auth";
 
 const MAX_ATTEMPTS = 3;
 const ACTIVE_RUNS = "('claimed', 'running')";
 const failureMessages = {
-  authentication_required: "Codex authentication needs to be refreshed by the CEO.",
+  authentication_required: codexAuthenticationRequiredMessage,
   repository_unavailable: "The approved repository could not be prepared for this run.",
   result_invalid: "Codex finished without a valid structured handoff.",
   execution_failed: "Codex execution failed.",
@@ -86,14 +87,17 @@ async function claimSecretaryInquiry(workerId: string): Promise<ClaimedJob | nul
     WHERE inquiries.status = 'queued' AND employees.desired_runtime_status = 'running'
       AND employees.runtime_status = 'running'
       AND (SELECT COUNT(*) FROM agent_runs runs
-        WHERE runs.job_type = 'secretary-inquiry' AND runs.job_id = inquiries.id) < ?
-    ORDER BY inquiries.created_at LIMIT 1`).bind(MAX_ATTEMPTS).first<{
+        WHERE runs.job_type = 'secretary-inquiry' AND runs.job_id = inquiries.id
+          AND NOT (runs.status = 'failed' AND runs.error = ?)) < ?
+    ORDER BY inquiries.created_at LIMIT 1`).bind(codexAuthenticationRequiredMessage, MAX_ATTEMPTS).first<{
       id: string; question: string; employeeId: string; employeeName: string; containerName: string | null;
     }>();
   if (!inquiry?.containerName) return null;
 
   const attemptRow = await d1.prepare(`SELECT COALESCE(MAX(attempt), 0) + 1 AS attempt
-    FROM agent_runs WHERE job_type = 'secretary-inquiry' AND job_id = ?`).bind(inquiry.id).first<{ attempt: number }>();
+    FROM agent_runs WHERE job_type = 'secretary-inquiry' AND job_id = ?
+      AND NOT (status = 'failed' AND error = ?)`)
+    .bind(inquiry.id, codexAuthenticationRequiredMessage).first<{ attempt: number }>();
   const attempt = attemptRow?.attempt ?? 1;
   const runId = `run-${crypto.randomUUID()}`;
   const inserted = await d1.prepare(`INSERT OR IGNORE INTO agent_runs (

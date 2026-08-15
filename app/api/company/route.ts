@@ -13,6 +13,7 @@ import {
   type TrainingSkill,
 } from "@/lib/company";
 import { bridgeAuthorized } from "@/lib/server/bridge-auth";
+import { findActiveTaskConflict, type ActiveTaskIdentity } from "@/lib/task-policy";
 
 async function readCompany(): Promise<CompanyState> {
   const d1 = env.DB;
@@ -381,6 +382,17 @@ export async function POST(request: Request) {
         FROM employees WHERE id = ?`).bind(assigneeId).first<{ resourceAccess: string; handoffRequired: number }>();
       if (!assignedPolicy || assignedPolicy.resourceAccess === "read-all") {
         return Response.json({ error: "This employee cannot execute tasks" }, { status: 400 });
+      }
+      if (task.status === "queued") {
+        const activeTasks = await d1.prepare(`SELECT id, title FROM tasks
+          WHERE assignee_id = ? AND status IN ('working', 'review')`).bind(assigneeId).all<ActiveTaskIdentity>();
+        const conflict = findActiveTaskConflict(activeTasks.results, taskId);
+        if (conflict) {
+          return Response.json(
+            { error: `Finish or reassign “${conflict.title}” before starting another task` },
+            { status: 409 },
+          );
+        }
       }
       if (next === "done") {
         if (assignedPolicy.handoffRequired) {

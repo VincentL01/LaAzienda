@@ -18,7 +18,7 @@ $baseImage = "one-man-company/codex-employee:local"
 $hrmImage = "one-man-company/hr-manager:local"
 $companyNetwork = "one-man-company"
 $hrmContainer = "omc-hrm"
-$runtimeVersion = "4"
+$runtimeVersion = "5"
 $controlUri = [Uri]$ControlUrl
 $insideControlUrl = if ($ContainerControlUrl) { $ContainerControlUrl.TrimEnd('/') } else { "$($controlUri.Scheme)://host.docker.internal:$($controlUri.Port)" }
 
@@ -33,6 +33,7 @@ if (-not (Test-Path -LiteralPath $authPath -PathType Leaf)) {
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   throw "Docker CLI is not available."
 }
+$authVersion = (Get-FileHash -LiteralPath $authPath -Algorithm SHA256).Hash.ToLowerInvariant()
 $network = & docker network ls --filter "name=^$companyNetwork$" --format "{{.Name}}"
 if ($network -ne $companyNetwork) {
   throw "The private company Docker network is missing. Start infrastructure/mail/Start-Mail.ps1 first."
@@ -53,6 +54,8 @@ if ($BuildImage -or -not $baseImageId) {
   & docker build --tag $baseImage $baseRoot
   if ($LASTEXITCODE -ne 0) { throw "The Codex base employee image could not be built." }
 }
+$baseImageIdentity = (& docker image inspect --format "{{.Id}}" $baseImage).Trim()
+if (-not $baseImageIdentity) { throw "The Codex base employee image identity is unavailable." }
 $hrmImageId = & docker image ls --filter "reference=$hrmImage" --format "{{.ID}}"
 if ($BuildImage -or -not $hrmImageId) {
   & docker build --tag $hrmImage $hrmRoot
@@ -96,7 +99,8 @@ $hrmExists = [bool]$hrmId
 if ($hrmExists) {
   $hrmLabels = (& docker container inspect --format "{{json .Config.Labels}}" $hrmContainer | ConvertFrom-Json)
   $existingVersion = [string]$hrmLabels.'one-man-company.runtime-version'
-  if ($BuildImage -or $existingVersion -ne $runtimeVersion) {
+  $existingAuthVersion = [string]$hrmLabels.'one-man-company.auth-version'
+  if ($BuildImage -or $existingVersion -ne $runtimeVersion -or $existingAuthVersion -ne $authVersion) {
     & docker container rm --force $hrmContainer | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "The obsolete HR Manager container could not be replaced." }
     $hrmExists = $false
@@ -108,6 +112,7 @@ if ($hrm.desiredRuntimeStatus -eq "running" -and -not $hrmExists) {
     "--label", "one-man-company.employee=$($hrm.id)",
     "--label", "one-man-company.docker-socket-holder=true",
     "--label", "one-man-company.runtime-version=$runtimeVersion",
+    "--label", "one-man-company.auth-version=$authVersion",
     "--restart", "unless-stopped",
     "--network", $companyNetwork,
     "--group-add", "0",
@@ -116,6 +121,8 @@ if ($hrm.desiredRuntimeStatus -eq "running" -and -not $hrmExists) {
     "--env", "OMC_WORKER_ID=$hrmContainer",
     "--env", "OMC_CONTROL_URL=$insideControlUrl",
     "--env", "OMC_BASE_IMAGE=$baseImage",
+    "--env", "OMC_BASE_IMAGE_ID=$baseImageIdentity",
+    "--env", "OMC_AUTH_VERSION=$authVersion",
     "--env", "OMC_DOCKER_NETWORK=$companyNetwork",
     "--env", "OMC_TRAINING_ROOT=/company/training-cache",
     "--env", "OMC_STATE_ROOT=/company/state",

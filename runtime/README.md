@@ -26,7 +26,7 @@ An optional `assets/github_auth/token` is also ignored. Only Project Manager con
 
 This `auth.json` transplant is a user-requested compatibility mechanism, not a documented Codex authentication API. Production automation should use a documented API-key or managed access-token flow with explicit rotation and revocation.
 
-If Codex reports that the copied ChatGPT refresh token was already used, replace the ignored source file with a freshly authenticated owner session and restart the employee containers. The dispatcher records `authentication_required` and pauses retries rather than treating the job as completed.
+If Codex reports that the copied ChatGPT refresh token was already used, replace the ignored source file with a freshly authenticated owner session and rerun `runtime/Start-Company.ps1`. The bootstrap passes only a SHA-256 version marker to Aurelia; HRM recreates employee containers whose auth version changed, causing the entrypoint to copy the fresh file. The dispatcher records `authentication_required` and pauses retries rather than treating the job as completed.
 
 ## Start the company
 

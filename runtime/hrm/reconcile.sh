@@ -4,6 +4,8 @@ set -eu
 control_url="${OMC_CONTROL_URL:-http://host.docker.internal:3000}"
 hrm_id="${OMC_EMPLOYEE_ID:-employee-hrm}"
 base_image="${OMC_BASE_IMAGE:-one-man-company/codex-employee:local}"
+base_image_id="${OMC_BASE_IMAGE_ID:-}"
+auth_version="${OMC_AUTH_VERSION:-}"
 company_network="${OMC_DOCKER_NETWORK:-one-man-company}"
 training_root="${OMC_TRAINING_ROOT:-/company/training-cache}"
 state_root="${OMC_STATE_ROOT:-/company/state}"
@@ -79,6 +81,21 @@ printf '%s' "$workforce" | jq -c --arg hrm "$hrm_id" '.employees[] | select(.id 
 
   if docker container inspect "$container_name" >/dev/null 2>&1; then exists=true; else exists=false; fi
 
+  if [ "$exists" = true ] && [ "$desired" = "running" ]; then
+    existing_employee="$(docker container inspect --format '{{index .Config.Labels "one-man-company.employee"}}' "$container_name")"
+    existing_image_id="$(docker container inspect --format '{{index .Config.Labels "one-man-company.base-image-id"}}' "$container_name")"
+    existing_auth_version="$(docker container inspect --format '{{index .Config.Labels "one-man-company.auth-version"}}' "$container_name")"
+    if [ "$existing_employee" != "$employee_id" ]; then
+      echo "Refusing to replace $container_name because its employee label does not match." >&2
+      continue
+    fi
+    if { [ -n "$base_image_id" ] && [ "$existing_image_id" != "$base_image_id" ]; } \
+      || { [ -n "$auth_version" ] && [ "$existing_auth_version" != "$auth_version" ]; }; then
+      docker container rm --force "$container_name" >/dev/null
+      exists=false
+    fi
+  fi
+
   if [ "$desired" = "running" ] && [ "$exists" = false ]; then
     workspace_volume="omc-workspace-$safe_employee"
     skills_volume="omc-skills-$safe_employee"
@@ -111,6 +128,8 @@ printf '%s' "$workforce" | jq -c --arg hrm "$hrm_id" '.employees[] | select(.id 
     set -- docker create --name "$container_name" \
       --label "one-man-company.employee=$employee_id" \
       --label "one-man-company.employment-type=$employment_type" \
+      --label "one-man-company.base-image-id=$base_image_id" \
+      --label "one-man-company.auth-version=$auth_version" \
       --restart unless-stopped \
       --network "$company_network" \
       --add-host host.docker.internal:host-gateway \

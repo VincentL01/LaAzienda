@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["completed", "needs_input"]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 20
+    },
+    "current_state": {
+      "type": "string",
+      "minLength": 5
+    },
+    "deliverables": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "decisions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "follow_up": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "knowledge": {
+      "type": "string",
+      "minLength": 20
+    }
+  },
+  "required": ["status", "summary", "current_state", "deliverables", "decisions", "follow_up", "knowledge"],
+  "additionalProperties": false
+}

@@ -2,6 +2,8 @@ import { env } from "cloudflare:workers";
 import { ensureDatabase } from "@/db/ensure";
 import {
   animationStates,
+  codexAuthenticationRequiredMessage,
+  githubAuthenticationRequiredMessage,
   employeeStatuses,
   taskStatuses,
   type AnimationMapping,
@@ -14,7 +16,7 @@ import { bridgeAuthorized } from "@/lib/server/bridge-auth";
 
 async function readCompany(): Promise<CompanyState> {
   const d1 = env.DB;
-  const [employees, tasks, mappings, activity, assignedSkills, projects, knowledge, handoffs] = await Promise.all([
+  const [employees, tasks, mappings, activity, assignedSkills, projects, knowledge, handoffs, runs, runEvents, secretaryInquiries] = await Promise.all([
     d1.prepare(`SELECT employees.id, employees.name, role, department, status, pet_id AS petId,
       character_packs.spritesheet_path AS spritesheetPath,
       role_profile_id AS roleProfileId, employment_type AS employmentType,
@@ -35,7 +37,7 @@ async function readCompany(): Promise<CompanyState> {
     d1.prepare(`SELECT employee_status AS employeeStatus, animation_state AS animationState,
       speed_ms AS speedMs FROM animation_mappings ORDER BY rowid`).all(),
     d1.prepare(`SELECT id, message, tone, created_at AS createdAt
-      FROM activity ORDER BY id DESC LIMIT 12`).all(),
+      FROM activity ORDER BY id DESC LIMIT 30`).all(),
     d1.prepare(`SELECT es.employee_id AS employeeId, s.id, s.package_ref AS packageRef,
       s.name, s.description, s.source_url AS sourceUrl, s.install_command AS installCommand,
       s.cache_status AS cacheStatus, s.created_at AS createdAt, s.cached_at AS cachedAt
@@ -51,6 +53,19 @@ async function readCompany(): Promise<CompanyState> {
     d1.prepare(`SELECT id, handoff_key AS handoffKey, task_id AS taskId, employee_id AS employeeId,
       summary, deliverables, decisions, follow_up AS followUp, knowledge_entry_id AS knowledgeEntryId,
       status, created_at AS createdAt FROM contractor_handoffs ORDER BY created_at DESC LIMIT 60`).all(),
+    d1.prepare(`SELECT id, job_type AS jobType, job_id AS jobId, task_id AS taskId,
+      employee_id AS employeeId, status, attempt, worker_id AS workerId,
+      prompt_summary AS promptSummary, last_event AS lastEvent, result_summary AS resultSummary,
+      deliverables, decisions, follow_up AS followUp, knowledge, error, thread_id AS threadId,
+      lease_expires_at AS leaseExpiresAt, heartbeat_at AS heartbeatAt, started_at AS startedAt,
+      finished_at AS finishedAt, created_at AS createdAt, updated_at AS updatedAt
+      FROM agent_runs ORDER BY created_at DESC LIMIT 100`).all(),
+    d1.prepare(`SELECT id, event_key AS eventKey, run_id AS runId, employee_id AS employeeId,
+      event_type AS eventType, message, created_at AS createdAt
+      FROM agent_run_events ORDER BY id DESC LIMIT 240`).all(),
+    d1.prepare(`SELECT id, question, status, answer, run_id AS runId,
+      created_at AS createdAt, answered_at AS answeredAt, updated_at AS updatedAt
+      FROM secretary_inquiries ORDER BY created_at DESC LIMIT 30`).all(),
   ]);
 
   const employeeRows = employees.results.map((row) => {
@@ -67,6 +82,15 @@ async function readCompany(): Promise<CompanyState> {
   for (const employee of employeeRows) {
     employee.skills = skillRows.filter((skill) => skill.employeeId === employee.id);
   }
+  const runRows = runs.results.map((row) => {
+    const run = row as unknown as Omit<CompanyState["runs"][number], "deliverables" | "decisions" | "followUp"> & {
+      deliverables: string; decisions: string; followUp: string;
+    };
+    const parseList = (value: string) => {
+      try { return JSON.parse(value) as string[]; } catch { return []; }
+    };
+    return { ...run, deliverables: parseList(run.deliverables), decisions: parseList(run.decisions), followUp: parseList(run.followUp) };
+  });
 
   return {
     employees: employeeRows,
@@ -76,6 +100,9 @@ async function readCompany(): Promise<CompanyState> {
     projects: projects.results as unknown as CompanyState["projects"],
     knowledge: knowledge.results as unknown as CompanyState["knowledge"],
     handoffs: handoffs.results as unknown as CompanyState["handoffs"],
+    runs: runRows,
+    runEvents: runEvents.results as unknown as CompanyState["runEvents"],
+    secretaryInquiries: secretaryInquiries.results as unknown as CompanyState["secretaryInquiries"],
   };
 }
 
@@ -103,25 +130,72 @@ export async function POST(request: Request) {
       const brief = typeof body.brief === "string" ? body.brief.trim().slice(0, 4000) : "";
       const priority = ["low", "normal", "high"].includes(String(body.priority)) ? String(body.priority) : "normal";
       const projectId = typeof body.projectId === "string" && body.projectId ? body.projectId : null;
-      const assigneeId = typeof body.assigneeId === "string" && body.assigneeId ? body.assigneeId : null;
+      const requestedAssigneeId = typeof body.assigneeId === "string" && body.assigneeId ? body.assigneeId : null;
       if (!title) return Response.json({ error: "A task title is required" }, { status: 400 });
       if (projectId && !await d1.prepare("SELECT id FROM projects WHERE id = ?").bind(projectId).first()) {
         return Response.json({ error: "Project not found" }, { status: 404 });
       }
+      const defaultManager = !requestedAssigneeId
+        ? await d1.prepare(`SELECT employees.id FROM employees
+          LEFT JOIN projects ON projects.manager_id = employees.id AND projects.id = ?
+          WHERE employees.role_profile_id = 'project-manager'
+          ORDER BY CASE WHEN projects.id IS NOT NULL THEN 0 ELSE 1 END, employees.created_at LIMIT 1`)
+          .bind(projectId).first<{ id: string }>()
+        : null;
+      const assigneeId = requestedAssigneeId ?? defaultManager?.id ?? null;
       const assignee = assigneeId
         ? await d1.prepare("SELECT name, handoff_required AS handoffRequired, resource_access AS resourceAccess FROM employees WHERE id = ?")
           .bind(assigneeId).first<{ name: string; handoffRequired: number; resourceAccess: string }>()
         : null;
       if (assigneeId && !assignee) return Response.json({ error: "Assignee not found" }, { status: 404 });
-      if (assignee?.resourceAccess === "read-all") return Response.json({ error: "The Secretary is read-only and cannot own tasks" }, { status: 400 });
+      if (assignee && ["read-all", "docker-provisioner"].includes(assignee.resourceAccess)) {
+        return Response.json({ error: "Choose a Project Manager, Expert, or Contractor to execute tasks" }, { status: 400 });
+      }
 
       const taskId = `task-${crypto.randomUUID()}`;
-      await d1.batch([
+      const statements = [
         d1.prepare(`INSERT INTO tasks (
           id, title, brief, status, priority, assignee_id, project_id, handoff_required
         ) VALUES (?, ?, ?, 'queued', ?, ?, ?, ?)`)
           .bind(taskId, title, brief, priority, assigneeId, projectId, assignee?.handoffRequired ?? 0),
-        d1.prepare("INSERT INTO activity (message, tone) VALUES (?, 'neutral')").bind(`CEO added "${title}" to the company queue.`),
+        d1.prepare("INSERT INTO activity (message, tone) VALUES (?, 'neutral')")
+          .bind(assignee ? `CEO dispatched "${title}" to ${assignee.name}.` : `CEO added "${title}" to the company queue.`),
+      ];
+      if (assigneeId) {
+        statements.push(d1.prepare(`UPDATE employees SET desired_runtime_status = 'running',
+          updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(assigneeId));
+      }
+      await d1.batch(statements);
+    } else if (action === "assignTask") {
+      const taskId = typeof body.taskId === "string" ? body.taskId : "";
+      const assigneeId = typeof body.assigneeId === "string" ? body.assigneeId : "";
+      const task = await d1.prepare("SELECT title, status FROM tasks WHERE id = ?").bind(taskId)
+        .first<{ title: string; status: TaskStatus }>();
+      const assignee = await d1.prepare(`SELECT name, handoff_required AS handoffRequired,
+        resource_access AS resourceAccess FROM employees WHERE id = ?`).bind(assigneeId)
+        .first<{ name: string; handoffRequired: number; resourceAccess: string }>();
+      if (!task || task.status !== "queued") return Response.json({ error: "Only Inbox tasks can be assigned" }, { status: 400 });
+      if (!assignee || ["read-all", "docker-provisioner"].includes(assignee.resourceAccess)) {
+        return Response.json({ error: "Choose a Project Manager, Expert, or Contractor" }, { status: 400 });
+      }
+      await d1.batch([
+        d1.prepare(`UPDATE tasks SET assignee_id = ?, handoff_required = ?,
+          updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(assigneeId, assignee.handoffRequired, taskId),
+        d1.prepare(`UPDATE employees SET desired_runtime_status = 'running',
+          updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(assigneeId),
+        d1.prepare("INSERT INTO activity (message, tone) VALUES (?, 'planning')")
+          .bind(`CEO assigned "${task.title}" to ${assignee.name}; Aurelia will dispatch it.`),
+      ]);
+    } else if (action === "askSecretary") {
+      const question = typeof body.question === "string" ? body.question.trim().slice(0, 1200) : "";
+      if (question.length < 5) return Response.json({ error: "Ask Dorothy a specific company-status question" }, { status: 400 });
+      const inquiryId = `inquiry-${crypto.randomUUID()}`;
+      await d1.batch([
+        d1.prepare("INSERT INTO secretary_inquiries (id, question, status) VALUES (?, ?, 'queued')")
+          .bind(inquiryId, question),
+        d1.prepare(`UPDATE employees SET desired_runtime_status = 'running',
+          updated_at = CURRENT_TIMESTAMP WHERE id = 'employee-dorothy'`),
+        d1.prepare("INSERT INTO activity (message, tone) VALUES ('CEO asked Dorothy for a live company briefing.', 'neutral')"),
       ]);
     } else if (action === "createProject") {
       const name = typeof body.name === "string" ? body.name.trim().slice(0, 120) : "";
@@ -220,14 +294,87 @@ export async function POST(request: Request) {
             .bind(`${employee.name} submitted an accepted handoff and returned knowledge to the company.`),
         ]);
       }
+    } else if (action === "retryAuthenticationBlocked" || action === "retryGithubAuthenticationBlocked") {
+      if (!bridgeAuthorized(request)) return Response.json({ error: "Runtime bridge authorization failed" }, { status: 403 });
+      const authenticationMessage = action === "retryGithubAuthenticationBlocked"
+        ? githubAuthenticationRequiredMessage
+        : codexAuthenticationRequiredMessage;
+      const blockedTasks = await d1.prepare(`SELECT tasks.id, tasks.title,
+        tasks.assignee_id AS assigneeId FROM tasks
+        JOIN agent_runs runs ON runs.id = (
+          SELECT id FROM agent_runs latest WHERE latest.task_id = tasks.id
+          ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
+        )
+        WHERE tasks.status = 'review' AND runs.status = 'failed' AND runs.error = ?`)
+        .bind(authenticationMessage).all<{ id: string; title: string; assigneeId: string | null }>();
+      const blockedInquiries = await d1.prepare(`SELECT inquiries.id FROM secretary_inquiries inquiries
+        JOIN agent_runs runs ON runs.id = (
+          SELECT id FROM agent_runs latest
+          WHERE latest.job_type = 'secretary-inquiry' AND latest.job_id = inquiries.id
+          ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
+        )
+        WHERE inquiries.status = 'failed' AND runs.status = 'failed' AND runs.error = ?`)
+        .bind(authenticationMessage).all<{ id: string }>();
+
+      const statements: D1PreparedStatement[] = [];
+      for (const task of blockedTasks.results) {
+        statements.push(
+          d1.prepare(`UPDATE tasks SET status = 'queued', execution_cycle = execution_cycle + 1,
+            updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'review'`).bind(task.id),
+        );
+        if (task.assigneeId) {
+          statements.push(d1.prepare(`UPDATE employees SET status = 'waiting', current_task_id = NULL,
+            desired_runtime_status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(task.assigneeId));
+        }
+      }
+      for (const inquiry of blockedInquiries.results) {
+        statements.push(d1.prepare(`UPDATE secretary_inquiries SET status = 'queued', run_id = NULL,
+          updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'failed'`).bind(inquiry.id));
+      }
+      if (blockedInquiries.results.length > 0) {
+        statements.push(d1.prepare(`UPDATE employees SET status = 'waiting', current_task_id = NULL,
+          desired_runtime_status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = 'employee-dorothy'`));
+      }
+      const retried = blockedTasks.results.length + blockedInquiries.results.length;
+      if (retried > 0) {
+        statements.push(d1.prepare("INSERT INTO activity (message, tone) VALUES (?, 'planning')")
+          .bind(`Aurelia detected refreshed ${action === "retryGithubAuthenticationBlocked" ? "GitHub" : "Codex"} authentication and returned ${retried} blocked ${retried === 1 ? "job" : "jobs"} to the execution queue.`));
+      }
+      if (statements.length > 0) await d1.batch(statements);
+    } else if (action === "retryTask") {
+      const taskId = typeof body.taskId === "string" ? body.taskId : "";
+      const task = await d1.prepare(`SELECT tasks.title, tasks.status, tasks.assignee_id AS assigneeId,
+        runs.status AS runStatus FROM tasks LEFT JOIN agent_runs runs ON runs.id = (
+          SELECT id FROM agent_runs latest WHERE latest.task_id = tasks.id ORDER BY latest.created_at DESC LIMIT 1
+        ) WHERE tasks.id = ?`).bind(taskId).first<{
+          title: string; status: TaskStatus; assigneeId: string | null; runStatus: string | null;
+        }>();
+      if (!task || task.status !== "review" || !["failed", "needs_input"].includes(task.runStatus ?? "")) {
+        return Response.json({ error: "Only blocked or failed review tasks can be retried" }, { status: 400 });
+      }
+      await d1.batch([
+        d1.prepare(`UPDATE tasks SET status = 'queued', execution_cycle = execution_cycle + 1,
+          updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(taskId),
+        d1.prepare(`UPDATE employees SET status = 'waiting', current_task_id = NULL,
+          desired_runtime_status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(task.assigneeId),
+        d1.prepare("INSERT INTO activity (message, tone) VALUES (?, 'planning')")
+          .bind(`CEO returned "${task.title}" to the execution queue.`),
+      ]);
     } else if (action === "advanceTask") {
       const taskId = typeof body.taskId === "string" ? body.taskId : "";
-      const task = await d1.prepare("SELECT title, status, assignee_id AS assigneeId FROM tasks WHERE id = ?")
-        .bind(taskId).first<{ title: string; status: TaskStatus; assigneeId: string | null }>();
+      const task = await d1.prepare(`SELECT tasks.title, tasks.status, tasks.assignee_id AS assigneeId,
+        (SELECT status FROM agent_runs WHERE task_id = tasks.id ORDER BY created_at DESC LIMIT 1) AS runStatus
+        FROM tasks WHERE tasks.id = ?`)
+        .bind(taskId).first<{ title: string; status: TaskStatus; assigneeId: string | null; runStatus: string | null }>();
       if (!task || !taskStatuses.includes(task.status)) return Response.json({ error: "Task not found" }, { status: 404 });
 
-      const nextStatus: Record<TaskStatus, TaskStatus> = { queued: "working", working: "review", review: "done", done: "done" };
-      const next = nextStatus[task.status];
+      if (task.status !== "review") {
+        return Response.json({ error: "The executor owns Inbox and In Progress transitions" }, { status: 409 });
+      }
+      if (task.runStatus !== "completed") {
+        return Response.json({ error: "A completed executor run is required before shipping" }, { status: 409 });
+      }
+      const next: TaskStatus = "done";
       const assigneeId = task.assigneeId;
       if (!assigneeId) return Response.json({ error: "Assign an employee before starting the task" }, { status: 400 });
       const assignedPolicy = await d1.prepare(`SELECT resource_access AS resourceAccess, handoff_required AS handoffRequired
@@ -243,17 +390,11 @@ export async function POST(request: Request) {
         }
       }
       const assignee = await d1.prepare("SELECT name FROM employees WHERE id = ?").bind(assigneeId).first<{ name: string }>();
-      const employeeStatus: Record<TaskStatus, EmployeeStatus> = { queued: "planning", working: "working", review: "review", done: "done" };
-      const label: Record<TaskStatus, string> = { queued: "queued", working: "started", review: "moved into review", done: "shipped" };
       const statements = [
         d1.prepare("UPDATE tasks SET status = ?, assignee_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(next, assigneeId, taskId),
-        d1.prepare("INSERT INTO activity (message, tone) VALUES (?, ?)").bind(`${assignee?.name ?? "An employee"} ${label[next]} "${task.title}".`, next === "done" ? "success" : next),
+        d1.prepare("INSERT INTO activity (message, tone) VALUES (?, 'success')").bind(`CEO accepted ${assignee?.name ?? "an employee"}'s result for "${task.title}".`),
       ];
-      statements.push(
-        next === "done"
-          ? d1.prepare("UPDATE employees SET status = ?, current_task_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(employeeStatus[next], assigneeId)
-          : d1.prepare("UPDATE employees SET status = ?, current_task_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(employeeStatus[next], taskId, assigneeId),
-      );
+      statements.push(d1.prepare("UPDATE employees SET status = 'done', current_task_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(assigneeId));
       await d1.batch(statements);
     } else if (action === "setEmployeeStatus") {
       const employeeId = typeof body.employeeId === "string" ? body.employeeId : "";

@@ -1,12 +1,12 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { EmployeeSprite } from "./EmployeeSprite";
+import { EmployeeInspector } from "./EmployeeInspector";
+import { LiveOffice } from "./LiveOffice";
 import {
-  employeeStatuses,
-  statusLabels,
+  codexAuthenticationRequiredMessage,
+  githubAuthenticationRequiredMessage,
   taskStatuses,
-  type AnimationMapping,
   type CompanyState,
   type CompanyTask,
   type Employee,
@@ -20,7 +20,7 @@ const columnCopy: Record<TaskStatus, { label: string; hint: string }> = {
   done: { label: "Shipped", hint: "Recently completed" },
 };
 
-const nextLabel: Partial<Record<TaskStatus, string>> = { queued: "Start", working: "Review", review: "Ship" };
+const nextLabel: Partial<Record<TaskStatus, string>> = { review: "Accept & ship" };
 
 interface HandoffFormProps {
   task: CompanyTask;
@@ -77,20 +77,28 @@ export function CompanyDashboard() {
   const [projectName, setProjectName] = useState("");
   const [projectBrief, setProjectBrief] = useState("");
   const [projectManagerId, setProjectManagerId] = useState("");
+  const [secretaryQuestion, setSecretaryQuestion] = useState("");
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/company", { cache: "no-store" })
-      .then(async (response) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function refresh() {
+      try {
+        const response = await fetch("/api/company", { cache: "no-store" });
         const data = await response.json() as CompanyState & { error?: string };
         if (!response.ok) throw new Error(data.error || "Could not load the company");
-        return data;
-      })
-      .then((data) => { if (!cancelled) setCompany(data); })
-      .catch((reason: Error) => { if (!cancelled) setError(reason.message); });
-    return () => { cancelled = true; };
+        if (!cancelled) { setCompany(data); setError(""); }
+      } catch (reason) {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not load the company");
+      } finally {
+        if (!cancelled) timer = setTimeout(refresh, 4000);
+      }
+    }
+    void refresh();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, []);
 
   async function act(payload: Record<string, unknown>, key: string) {
@@ -127,12 +135,13 @@ export function CompanyDashboard() {
     setProjectBrief("");
   }
 
-  const employee = company?.employees.find((item) => item.id === "employee-hrm") ?? company?.employees[0];
-  const mapping = useMemo<AnimationMapping | undefined>(
-    () => company?.mappings.find((item) => item.employeeStatus === employee?.status),
-    [company?.mappings, employee?.status],
-  );
-  const currentTask = company?.tasks.find((task) => task.id === employee?.currentTaskId);
+  async function askSecretary(event: FormEvent) {
+    event.preventDefault();
+    if (!secretaryQuestion.trim()) return;
+    await act({ action: "askSecretary", question: secretaryQuestion }, "ask-secretary");
+    setSecretaryQuestion("");
+  }
+
   const counts = useMemo(() => ({
     queued: company?.tasks.filter((task) => task.status === "queued").length ?? 0,
     active: company?.tasks.filter((task) => task.status === "working").length ?? 0,
@@ -142,8 +151,15 @@ export function CompanyDashboard() {
 
   if (!company) return <main className="loading-room"><span className="pixel-loader" /> Waking the company...</main>;
 
-  const taskEmployees = company.employees.filter((item) => item.resourceAccess !== "read-all");
+  const taskEmployees = company.employees.filter((item) => !["read-all", "docker-provisioner"].includes(item.resourceAccess));
   const projectManagers = company.employees.filter((item) => item.roleProfileId === "project-manager");
+  const selectedEmployee = company.employees.find((item) => item.id === selectedEmployeeId) ?? null;
+  const authenticationBlocked = company.tasks.some((task) => task.status === "review"
+    && company.runs.find((run) => run.taskId === task.id)?.error === codexAuthenticationRequiredMessage)
+    || company.secretaryInquiries.some((inquiry) => inquiry.status === "failed"
+      && company.runs.find((run) => run.jobType === "secretary-inquiry" && run.jobId === inquiry.id)?.error === codexAuthenticationRequiredMessage);
+  const githubAuthenticationBlocked = company.tasks.some((task) => task.status === "review"
+    && company.runs.find((run) => run.taskId === task.id)?.error === githubAuthenticationRequiredMessage);
 
   return (
     <main className="dashboard-shell">
@@ -151,7 +167,7 @@ export function CompanyDashboard() {
         <div>
           <span className="eyebrow">CEO COMMAND LINE</span>
           <h1>What should the company<br />accomplish next?</h1>
-          <p>Set the direction. Assign real ownership. Contractors cannot close without a handoff.</p>
+          <p>Set the direction. Aurelia provisions the owner, Codex executes, and every result returns with evidence.</p>
         </div>
         <form className="command-form" onSubmit={createTask}>
           <label htmlFor="task-command">New company objective</label>
@@ -166,7 +182,7 @@ export function CompanyDashboard() {
           <div className="command-detail-row">
             <textarea aria-label="Task brief" value={brief} onChange={(event) => setBrief(event.target.value)} placeholder="Definition of done, constraints, and context" rows={2} />
             <select aria-label="Task assignee" value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)}>
-              <option value="">Choose assignee</option>
+              <option value="">Auto-assign Project Manager</option>
               {taskEmployees.map((item) => <option key={item.id} value={item.id}>{item.name} / {item.role}</option>)}
             </select>
             <select aria-label="Project" value={projectId} onChange={(event) => setProjectId(event.target.value)}>
@@ -185,31 +201,47 @@ export function CompanyDashboard() {
         <article><span className="metric-icon done">OK</span><div><b>{counts.done}</b><small>Shipped</small></div></article>
       </section>
 
+      {authenticationBlocked ? <section className="company-alert" role="status">
+        <b>Codex sign-in needs CEO attention</b>
+        <p>Replace the ignored <code>assets/agent_auth/auth.json</code> with a fresh authenticated session. Aurelia detects the saved file within five seconds, refreshes affected employee containers, and retries only authentication-blocked work.</p>
+      </section> : null}
+
+      {githubAuthenticationBlocked ? <section className="company-alert" role="status">
+        <b>GitHub sign-in needs CEO attention</b>
+        <p>Run <code>runtime/Import-GitHubCredential.ps1</code> on the host. It securely imports the existing VincentL01 Git Credential Manager identity, refreshes only the Project Manager credential boundary, and never exposes the credential in the portal.</p>
+      </section> : null}
+
       <section className="workspace-grid">
         <div className="office-panel panel">
-          <div className="panel-heading"><div><span className="eyebrow">LIVE FLOOR</span><h2>The office</h2></div><span className="live-chip"><i /> live</span></div>
-          <div className="pixel-office">
-            <div className="office-window"><i /><i /><i /></div>
-            <div className="wall-note note-one">SHIP</div><div className="wall-note note-two">LEARN</div>
-            <div className="pixel-plant"><i /><i /><b /></div><div className="pixel-rug" />
-            <div className="desk"><div className="monitor"><span>WORK<br />LOG</span></div><div className="mug" /><i /><i /></div>
-            <div className="employee-station">
-              <div className="speech-bubble">{currentTask?.title ?? statusLabels[employee?.status ?? "idle"]}</div>
-              <EmployeeSprite animation={mapping?.animationState ?? "idle"} speedMs={mapping?.speedMs} size="large" spritesheetPath={employee?.spritesheetPath} label={`${employee?.name ?? "Employee"} character`} />
-              <div className="employee-nameplate"><b>{employee?.name}</b><span>{employee?.role}</span></div>
-            </div>
-            {employee && <div className="office-status-card">
-              <span>STATUS</span><b><i className={`status-dot status-${employee.status}`} /> {statusLabels[employee.status]}</b>
-              <label htmlFor="employee-status">Preview employee state</label>
-              <select id="employee-status" value={employee.status} disabled={busy === "employee-status"} onChange={(event) => act({ action: "setEmployeeStatus", employeeId: employee.id, status: event.target.value }, "employee-status") }>
-                {employeeStatuses.map((status) => <option value={status} key={status}>{statusLabels[status]}</option>)}
-              </select>
-            </div>}
-          </div>
+          <div className="panel-heading"><div><span className="eyebrow">LIVE FLOOR</span><h2>The company campus</h2></div><span className="live-chip"><i /> D1 live</span></div>
+          <LiveOffice
+            employees={company.employees}
+            tasks={company.tasks}
+            mappings={company.mappings}
+            selectedEmployeeId={selectedEmployeeId}
+            onSelectEmployee={setSelectedEmployeeId}
+          />
         </div>
 
         <aside className="activity-panel panel">
-          <div className="panel-heading compact"><div><span className="eyebrow">COMPANY FEED</span><h2>Activity</h2></div></div>
+          <div className="panel-heading compact"><div><span className="eyebrow">SECRETARY DESK</span><h2>Ask Dorothy</h2></div></div>
+          <form className="secretary-form" onSubmit={askSecretary}>
+            <label htmlFor="secretary-question">Ask about any employee, job, heartbeat, or blocker</label>
+            <textarea id="secretary-question" rows={3} value={secretaryQuestion} onChange={(event) => setSecretaryQuestion(event.target.value)} placeholder="What is happening with the LaAzienda improvement job?" />
+            <button className="secondary-action" disabled={busy === "ask-secretary" || !secretaryQuestion.trim()}>{busy === "ask-secretary" ? "Queuing..." : "Ask for live briefing"}</button>
+          </form>
+          <div className="secretary-answers">
+            {company.secretaryInquiries.slice(0, 3).map((inquiry) => <article key={inquiry.id}>
+              <span className={`run-status run-${inquiry.status}`}>{inquiry.status}</span>
+              <b>{inquiry.question}</b>
+              <p>{inquiry.answer || (inquiry.status === "running"
+                ? "Dorothy is reading the company record now."
+                : inquiry.status === "failed"
+                  ? "Dorothy could not complete the briefing. Open her personnel file for the recorded blocker."
+                  : "Waiting for Aurelia to dispatch Dorothy.")}</p>
+            </article>)}
+          </div>
+          <div className="panel-heading compact activity-subheading"><div><span className="eyebrow">COMPANY FEED</span><h2>Activity</h2></div></div>
           <ol className="activity-list">
             {company.activity.map((item) => <li key={item.id}><i className={`activity-mark tone-${item.tone}`} /><div><p>{item.message}</p><time>{new Date(`${item.createdAt}Z`).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time></div></li>)}
           </ol>
@@ -246,6 +278,7 @@ export function CompanyDashboard() {
             <div className="task-stack">
               {company.tasks.filter((task) => task.status === status).map((task) => {
                 const contractor = company.employees.find((item) => item.id === task.assigneeId);
+                const latestRun = company.runs.find((run) => run.taskId === task.id);
                 const accepted = company.handoffs.some((handoff) => handoff.taskId === task.id && handoff.status === "accepted");
                 const project = company.projects.find((item) => item.id === task.projectId);
                 return <article className="task-card" key={task.id}>
@@ -253,8 +286,22 @@ export function CompanyDashboard() {
                   <h3>{task.title}</h3>{task.brief && <p>{task.brief}</p>}
                   {project ? <small className="task-project">Project / {project.name}</small> : null}
                   {task.handoffRequired ? <span className="handoff-chip">Contractor handoff required</span> : null}
+                  {latestRun ? <div className="task-run-line"><span className={`run-status run-${latestRun.status}`}>{latestRun.status.replace("_", " ")}</span><small>{latestRun.lastEvent}</small></div> : null}
+                  {latestRun?.error ? <small className="run-error">{latestRun.error}</small> : null}
+                  {status === "queued" && !contractor ? <label className="task-assigner">Assign for execution
+                    <select defaultValue="" onChange={(event) => {
+                      if (event.target.value) void act({ action: "assignTask", taskId: task.id, assigneeId: event.target.value }, `assign-${task.id}`);
+                    }} disabled={busy === `assign-${task.id}`}>
+                      <option value="">Choose employee</option>
+                      {taskEmployees.map((item) => <option key={item.id} value={item.id}>{item.name} / {item.role}</option>)}
+                    </select>
+                  </label> : null}
+                  {status === "queued" && contractor ? <p className="executor-note">Queued for Aurelia’s dispatcher. The container will start automatically.</p> : null}
+                  {status === "working" ? <p className="executor-note">Live execution is owned by the agent runner; board movement is automatic.</p> : null}
                   {status === "review" && contractor?.employmentType === "contractor" ? <ContractorHandoffForm task={task} contractor={contractor} accepted={accepted} busy={busy === `handoff-${task.id}`} onSubmit={act} /> : null}
-                  {nextLabel[status] && <button disabled={busy === task.id || (status === "review" && task.handoffRequired && !accepted)} onClick={() => act({ action: "advanceTask", taskId: task.id }, task.id)}>{busy === task.id ? "Moving..." : nextLabel[status]} <span>-&gt;</span></button>}
+                  {status === "review" && latestRun?.resultSummary ? <blockquote className="task-result">{latestRun.resultSummary}</blockquote> : null}
+                  {status === "review" && ["failed", "needs_input"].includes(latestRun?.status ?? "") ? <button disabled={busy === `retry-${task.id}`} onClick={() => act({ action: "retryTask", taskId: task.id }, `retry-${task.id}`)}>{busy === `retry-${task.id}` ? "Queuing..." : "Retry with employee"}</button> : null}
+                  {nextLabel[status] && <button disabled={busy === task.id || latestRun?.status !== "completed" || (status === "review" && task.handoffRequired && !accepted)} onClick={() => act({ action: "advanceTask", taskId: task.id }, task.id)}>{busy === task.id ? "Moving..." : nextLabel[status]} <span>-&gt;</span></button>}
                 </article>;
               })}
               {!company.tasks.some((task) => task.status === status) && <div className="empty-column">Nothing here yet</div>}
@@ -262,6 +309,7 @@ export function CompanyDashboard() {
           </section>)}
         </div>
       </section>
+      {selectedEmployee ? <EmployeeInspector employee={selectedEmployee} company={company} onClose={() => setSelectedEmployeeId(null)} /> : null}
     </main>
   );
 }

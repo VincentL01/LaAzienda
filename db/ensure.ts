@@ -2,9 +2,11 @@ import { env } from "cloudflare:workers";
 
 let initialization: Promise<void> | undefined;
 
-const hrmPrompt = `You are Aurelia, the Human Resources Manager of One Man Company and the sole employee allowed to hold the Docker socket. Reconcile only CEO-approved employee records from the company control plane. Create containers only from the approved One Man Company base image or its reviewed HRM extension, attach the minimum declared mounts, and record observed Docker state. Never expose Codex or GitHub credentials, never mount the Docker socket into another employee, and never claim a container exists until Docker reports it.`;
+const hrmPrompt = `You are Aurelia, the Human Resources Manager of One Man Company and the sole employee allowed to hold the Docker socket. Reconcile only CEO-approved employee records from the company control plane, run the approved dispatcher, and execute work only inside the assigned employee container. Create containers only from the approved One Man Company base image or its reviewed HRM extension, attach the minimum declared mounts, and record observed Docker and task-run state. Never execute project work in the socket-holding HRM container, expose Codex or GitHub credentials, mount the Docker socket into another employee, or claim work happened without executor evidence.`;
 
-const secretaryPrompt = `You are Dorothy, the read-only Secretary of One Man Company. You may inspect company records, project status, employee state, knowledge, and company mail so the CEO can immediately understand what is happening. You must not change tasks, send mail, edit repositories, provision containers, or mutate company resources. Separate observed facts from inference and identify the accountable Project Manager or HR Manager for every requested action.`;
+const secretaryPrompt = `You are Dorothy, the read-only Secretary of One Man Company. For every status question, run company-status and ground the answer in current company records, agent runs, heartbeats, project state, employee state, knowledge, and company mail. You must not change tasks, send mail, edit repositories, provision containers, or mutate company resources. Separate observed facts from inference, state when evidence is stale, and identify the accountable Project Manager or HR Manager for every requested action.`;
+
+const projectManagerPrompt = `You are Beatrice, the founding Project Manager of One Man Company. Keep the approved project brief, repository URL, constraints, acceptance criteria, dependencies, and decisions current. Coordinate work through company records and return evidence with every result. For repository changes, always create a codex/* branch, commit there, push that branch, and open a pull request; never commit or push directly to main. Public repositories must belong to VincentL01 and may be created only after CEO approval. Never expose GitHub or Codex credentials.`;
 
 const seedRoles = [
   {
@@ -48,7 +50,7 @@ const seedRoles = [
     title: "Project Manager",
     department: "Project Office",
     mission: "Own project context, approved public repositories, delegation briefs, quality gates, and delivery status.",
-    systemPrompt: "You are a Project Manager at One Man Company. Keep the approved project brief, repository URL, constraints, acceptance criteria, dependencies, and decisions current. Public repositories must belong to VincentL01 and may be created only after the CEO approves the project record. Never expose GitHub credentials. Pass a complete project and repository brief to every employee, coordinate through company mail, and require evidence plus contractor handoffs before closure.",
+    systemPrompt: projectManagerPrompt,
     skills: ["project-management", "github-project-delivery", "handoff-review"],
     employmentType: "expert",
     workspacePolicy: "persistent",
@@ -332,6 +334,7 @@ async function initialize() {
       assignee_id TEXT,
       project_id TEXT,
       handoff_required INTEGER NOT NULL DEFAULT 0,
+      execution_cycle INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
@@ -380,6 +383,51 @@ async function initialize() {
       detail TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
+    d1.prepare(`CREATE TABLE IF NOT EXISTS agent_runs (
+      id TEXT PRIMARY KEY,
+      job_type TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      task_id TEXT,
+      employee_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'claimed',
+      attempt INTEGER NOT NULL DEFAULT 1,
+      execution_cycle INTEGER NOT NULL DEFAULT 1,
+      worker_id TEXT NOT NULL,
+      prompt_summary TEXT NOT NULL DEFAULT '',
+      last_event TEXT NOT NULL DEFAULT 'Claimed by the company dispatcher.',
+      result_summary TEXT NOT NULL DEFAULT '',
+      deliverables TEXT NOT NULL DEFAULT '[]',
+      decisions TEXT NOT NULL DEFAULT '[]',
+      follow_up TEXT NOT NULL DEFAULT '[]',
+      knowledge TEXT NOT NULL DEFAULT '',
+      error TEXT,
+      thread_id TEXT,
+      lease_expires_at TEXT,
+      heartbeat_at TEXT,
+      started_at TEXT,
+      finished_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    d1.prepare(`CREATE TABLE IF NOT EXISTS agent_run_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_key TEXT NOT NULL UNIQUE,
+      run_id TEXT NOT NULL,
+      employee_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
+    d1.prepare(`CREATE TABLE IF NOT EXISTS secretary_inquiries (
+      id TEXT PRIMARY KEY,
+      question TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      answer TEXT NOT NULL DEFAULT '',
+      run_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      answered_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
     d1.prepare(`CREATE TABLE IF NOT EXISTS activity (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       message TEXT NOT NULL,
@@ -426,7 +474,14 @@ async function initialize() {
   const taskAlterations: D1PreparedStatement[] = [];
   if (!knownTaskColumns.has("project_id")) taskAlterations.push(d1.prepare("ALTER TABLE tasks ADD COLUMN project_id TEXT"));
   if (!knownTaskColumns.has("handoff_required")) taskAlterations.push(d1.prepare("ALTER TABLE tasks ADD COLUMN handoff_required INTEGER NOT NULL DEFAULT 0"));
+  if (!knownTaskColumns.has("execution_cycle")) taskAlterations.push(d1.prepare("ALTER TABLE tasks ADD COLUMN execution_cycle INTEGER NOT NULL DEFAULT 1"));
   if (taskAlterations.length) await d1.batch(taskAlterations);
+
+  const runColumns = await d1.prepare("PRAGMA table_info(agent_runs)").all<{ name: string }>();
+  const knownRunColumns = new Set(runColumns.results.map((column) => column.name));
+  if (!knownRunColumns.has("execution_cycle")) {
+    await d1.prepare("ALTER TABLE agent_runs ADD COLUMN execution_cycle INTEGER NOT NULL DEFAULT 1").run();
+  }
 
   await d1.batch([
     d1.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_status_updated ON tasks(status, updated_at)"),
@@ -436,6 +491,13 @@ async function initialize() {
     d1.prepare("CREATE INDEX IF NOT EXISTS idx_character_packs_cache_status ON character_packs(cache_status)"),
     d1.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_events_event_key ON runtime_events(event_key)"),
     d1.prepare("CREATE INDEX IF NOT EXISTS idx_runtime_events_employee_created ON runtime_events(employee_id, created_at)"),
+    d1.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runs_active_job ON agent_runs(job_type, job_id) WHERE status IN ('claimed', 'running')"),
+    d1.prepare("CREATE INDEX IF NOT EXISTS idx_agent_runs_employee_created ON agent_runs(employee_id, created_at)"),
+    d1.prepare("CREATE INDEX IF NOT EXISTS idx_agent_runs_task_created ON agent_runs(task_id, created_at)"),
+    d1.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_run_events_key ON agent_run_events(event_key)"),
+    d1.prepare("CREATE INDEX IF NOT EXISTS idx_agent_run_events_run_created ON agent_run_events(run_id, created_at)"),
+    d1.prepare("CREATE INDEX IF NOT EXISTS idx_agent_run_events_employee_created ON agent_run_events(employee_id, created_at)"),
+    d1.prepare("CREATE INDEX IF NOT EXISTS idx_secretary_inquiries_status_created ON secretary_inquiries(status, created_at)"),
     d1.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_email_address ON employees(email_address) WHERE email_address IS NOT NULL"),
     d1.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_mail_messages_key ON mail_messages(message_key)"),
     d1.prepare("CREATE INDEX IF NOT EXISTS idx_mail_messages_status_created ON mail_messages(status, created_at)"),
@@ -529,8 +591,24 @@ async function initialize() {
       ) VALUES ('employee-dorothy', 'Dorothy', 'Secretary', 'Executive Office',
         'offline', 'crimson-executive', 'secretary', 'executive', 'persistent',
         'read-all', 0, 0, 'dorothy@one-man-company.test', 'requested', ?,
-        'omc-dorothy', 'stopped', 'not_provisioned', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`).bind(secretaryPrompt),
+        'omc-dorothy', 'running', 'not_provisioned', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`).bind(secretaryPrompt),
       d1.prepare("INSERT INTO activity (message, tone) VALUES ('Dorothy joined as the CEO read-only secretary.', 'success')"),
+    ]);
+  }
+
+  const projectManager = await d1.prepare("SELECT id FROM employees WHERE id = 'employee-beatrice'").first();
+  if (!projectManager) {
+    await d1.batch([
+      d1.prepare(`INSERT INTO employees (
+        id, name, role, department, status, pet_id, role_profile_id, employment_type,
+        workspace_policy, resource_access, docker_socket_access, handoff_required,
+        email_address, mailbox_status, system_prompt, container_name,
+        desired_runtime_status, runtime_status, current_task_id, created_at, updated_at
+      ) VALUES ('employee-beatrice', 'Beatrice', 'Project Manager', 'Project Office',
+        'offline', 'yae-miko', 'project-manager', 'expert', 'persistent',
+        'project-write', 0, 0, 'beatrice@one-man-company.test', 'requested', ?,
+        'omc-beatrice', 'running', 'not_provisioned', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`).bind(projectManagerPrompt),
+      d1.prepare("INSERT INTO activity (message, tone) VALUES ('Beatrice joined as the founding Project Manager.', 'success')"),
     ]);
   }
 
@@ -546,9 +624,35 @@ async function initialize() {
       workspace_policy = 'persistent', resource_access = 'read-all', docker_socket_access = 0,
       handoff_required = 0, email_address = COALESCE(email_address, 'dorothy@one-man-company.test'),
       mailbox_status = COALESCE(mailbox_status, 'requested'), system_prompt = ?,
-      container_name = COALESCE(container_name, 'omc-dorothy'), updated_at = CURRENT_TIMESTAMP
+      container_name = COALESCE(container_name, 'omc-dorothy'), desired_runtime_status = 'running',
+      updated_at = CURRENT_TIMESTAMP
       WHERE id = 'employee-dorothy'`).bind(secretaryPrompt),
+    d1.prepare(`UPDATE employees SET role = 'Project Manager', department = 'Project Office',
+      pet_id = COALESCE(NULLIF(pet_id, ''), 'yae-miko'), role_profile_id = 'project-manager',
+      employment_type = 'expert', workspace_policy = 'persistent', resource_access = 'project-write',
+      docker_socket_access = 0, handoff_required = 0,
+      email_address = COALESCE(email_address, 'beatrice@one-man-company.test'),
+      mailbox_status = COALESCE(mailbox_status, 'requested'), system_prompt = ?,
+      container_name = COALESCE(container_name, 'omc-beatrice'), desired_runtime_status = 'running',
+      updated_at = CURRENT_TIMESTAMP WHERE id = 'employee-beatrice'`).bind(projectManagerPrompt),
   ]);
+
+  await d1.prepare(`INSERT INTO projects (
+    id, name, brief, github_owner, repository_name, repository_url, visibility, status, manager_id
+  ) VALUES ('project-laazienda', 'LaAzienda',
+    'Build the smallest trustworthy operating system for a company of isolated Codex employees.',
+    'VincentL01', 'LaAzienda', 'https://github.com/VincentL01/LaAzienda', 'public', 'active', 'employee-beatrice')
+  ON CONFLICT(id) DO UPDATE SET name = excluded.name, brief = excluded.brief,
+    github_owner = excluded.github_owner, repository_name = excluded.repository_name,
+    repository_url = excluded.repository_url, visibility = excluded.visibility,
+    status = excluded.status, manager_id = excluded.manager_id, updated_at = CURRENT_TIMESTAMP`).run();
+
+  await d1.prepare(`INSERT INTO tasks (
+    id, title, brief, status, priority, assignee_id, project_id, handoff_required
+  ) SELECT 'task-laazienda-continuous-improvement', 'Continue improving the LaAzienda application',
+    'Inspect the current product and deliver the next smallest trustworthy improvement through a pull request.',
+    'queued', 'normal', 'employee-beatrice', 'project-laazienda', 0
+  WHERE NOT EXISTS (SELECT 1 FROM tasks WHERE title = 'Continue improving the LaAzienda application')`).run();
 
   if ((employeeCount?.count ?? 0) === 0) {
     await d1.batch([
@@ -573,11 +677,31 @@ async function initialize() {
       'reading-list', 'James Serra data architecture', 'candidate')`),
     d1.prepare(`UPDATE tasks SET title = 'Bootstrap the HR Manager',
       brief = 'Build the Codex base image, start Aurelia, and verify that no other employee has the Docker socket.',
-      assignee_id = 'employee-hrm', handoff_required = 0 WHERE id = 'task-runtime'`),
+      status = 'done', assignee_id = 'employee-hrm', handoff_required = 0 WHERE id = 'task-runtime'`),
     d1.prepare(`UPDATE tasks SET title = 'Initialize the company control room',
       brief = 'Record the CEO-created command surface as founding infrastructure.',
       assignee_id = NULL, handoff_required = 0 WHERE id = 'task-control-room'`),
+    d1.prepare(`UPDATE tasks SET status = 'queued', assignee_id = 'employee-beatrice',
+      project_id = 'project-laazienda', updated_at = CURRENT_TIMESTAMP
+      WHERE id = 'task-auth' AND assignee_id = 'employee-dorothy'`),
+    d1.prepare(`UPDATE tasks SET title = 'Continue improving the LaAzienda application',
+      assignee_id = COALESCE(assignee_id, 'employee-beatrice'),
+      project_id = COALESCE(project_id, 'project-laazienda'), updated_at = CURRENT_TIMESTAMP
+      WHERE title = 'Continue improve this OneManCompany application'`),
+    d1.prepare(`UPDATE employees SET status = CASE WHEN runtime_status = 'running' THEN 'idle' ELSE 'offline' END,
+      current_task_id = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE id = 'employee-dorothy' AND current_task_id IS NOT NULL`),
+    d1.prepare(`UPDATE employees SET status = 'idle', current_task_id = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE id = 'employee-hrm' AND current_task_id IS NULL AND status = 'working'`),
   ]);
+
+  await d1.prepare(`UPDATE employees SET status = 'failed', updated_at = CURRENT_TIMESTAMP
+    WHERE runtime_status = 'running'
+      AND (SELECT status FROM agent_runs
+        WHERE agent_runs.employee_id = employees.id
+        ORDER BY created_at DESC, id DESC LIMIT 1) = 'failed'
+      AND NOT EXISTS (SELECT 1 FROM agent_runs active
+        WHERE active.employee_id = employees.id AND active.status IN ('claimed', 'running'))`).run();
 
   await d1.batch(
     seedMappings.map(([status, animation, speed]) =>

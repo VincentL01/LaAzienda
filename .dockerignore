@@ -1,0 +1,14 @@
+.git
+.next
+.vinext
+.wrangler
+assets
+dist
+node_modules
+outputs
+runtime/state
+training-center/cache
+training-center/work
+work
+.env*
+infrastructure/mail/.env.local

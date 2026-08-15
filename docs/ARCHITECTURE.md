@@ -4,7 +4,7 @@
 
 `CEO objective -> Project Manager brief -> owned task -> HRM-provisioned Codex employee -> evidence/review -> contractor handoff -> approved company knowledge -> shipped`
 
-The current vertical slice reaches durable project/task ownership, employee policy, real container provisioning, company mail, contractor handoff, and knowledge retention. It deliberately stops before automatically invoking `codex exec`, so the portal never presents placeholder output as agent work.
+The current vertical slice reaches durable project/task ownership, employee policy, real container provisioning, serialized `codex exec` dispatch, live run evidence, Secretary briefings, company mail, contractor handoff, and knowledge retention. The portal never presents placeholder output as agent work.
 
 ## Control plane and the sole socket holder
 
@@ -18,7 +18,8 @@ flowchart LR
   D1 --> Host["Minimal host bootstrap"]
   Host --> HRM["Aurelia / HRM container"]
   Socket["Docker socket"] --> HRM
-  HRM --> Employees["Employees / no socket"]
+  HRM --> Executor["Lease + safe JSONL event dispatcher"]
+  Executor --> Employees["Employees / no socket"]
   Cache["Reviewed Training Center"] --> HRM
   Auth["Auth-only source mount"] --> Employees
   D1 --> MailBridge["Mail bridge"]
@@ -27,7 +28,7 @@ flowchart LR
   Employees --> D1
 ```
 
-The bootstrap and HRM both fail closed if D1 reports any second socket holder. Runtime events use replay-safe keys. A requested start is never displayed as an observed running container.
+The bootstrap and HRM both fail closed if D1 reports any second socket holder. Runtime and run events use replay-safe keys. A requested start is never displayed as an observed running container. The loop runs one job at a time, heartbeats a two-minute lease, retries transient failures up to three times per execution cycle, and pauses immediately for owner authentication.
 
 ## Employee archetypes
 
@@ -51,9 +52,15 @@ D1 stores Training Center catalog and review state. The local filesystem stores 
 
 `assets/agent_auth/auth.json` is excluded from Git and every image. The runtime exposes it through an auth-only source mount; the entrypoint copies it to the non-root Codex user's `.codex/auth.json` with mode `0600`.
 
-An optional fine-grained GitHub token is also excluded. It is mounted only into Project Manager containers and exported as `GH_TOKEN`. A D1 project record is merely planned work. Creating a public repository under `VincentL01` is a separate executor side effect that requires an approved project and should record its resulting URL.
+Aurelia fingerprints the mounted source during its five-second reconciliation loop. A new fingerprint replaces only stale employee containers while retaining their named volumes, then idempotently requeues tasks and secretary inquiries whose latest run failed with the explicit authentication blocker. The fingerprint is stored in Aurelia's ignored runtime workspace; credential contents never enter D1, labels, logs, or activity records.
+
+An optional fine-grained GitHub token is also excluded. The host importer reads the approved `VincentL01` Git Credential Manager identity without displaying it and writes only to a verified ignored path. The versioned secret source is mounted only into Project Manager containers and exported as `GH_TOKEN`. HRM also grants only those `project-write` containers outbound access inside the Codex workspace sandbox; all other employee sandboxes keep the network default disabled. A D1 project record is merely planned work. Creating a public repository under `VincentL01` is a separate executor side effect that requires an approved project and should record its resulting URL.
+
+Each task retry records a new auditable run but points execution at the prior run's persistent workspace. Network and authentication recovery therefore resumes already validated commits instead of silently creating a fresh checkout.
 
 Dorothy can read company records, mail, runtime observations, projects, and knowledge, but the API refuses to use her as a mail sender or task owner. Her prompt forbids mutations.
+
+Secretary inquiries are durable jobs assigned only to Dorothy's running container. `company-status` retrieves the same D1 snapshot used by the CEO's employee inspector, so her answer can name the accountable employee, current task/run, heartbeat, and missing or stale evidence.
 
 ## Separate state contracts
 
@@ -76,8 +83,8 @@ The pinned Stalwart container persists configuration and mail data in named Dock
 
 ## Next vertical slice
 
-1. Add an executor that claims one approved task or message and invokes `codex exec` inside the assigned running container.
+1. Replace the compatibility `auth.json` copy with a managed per-employee authentication and rotation contract.
 2. Let Project Managers create an approved public repository, report its URL, and dispatch repository-specific work.
-3. Add correlated progress, waiting, review, completion, and failure events with artifact evidence.
+3. Attach validated artifacts, commits, checks, and pull-request URLs to run evidence.
 4. Archive a completed Contractor workspace only after its accepted handoff, then stop/remove the container safely.
 5. Add meetings, approval gates, performance reviews/coaching, cost accounting, retrospectives, and SOP promotion as real records rather than simulated UI.

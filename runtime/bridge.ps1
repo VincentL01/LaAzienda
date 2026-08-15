@@ -18,6 +18,7 @@ $baseImage = "one-man-company/codex-employee:local"
 $hrmImage = "one-man-company/hr-manager:local"
 $companyNetwork = "one-man-company"
 $hrmContainer = "omc-hrm"
+$runtimeVersion = "8"
 $controlUri = [Uri]$ControlUrl
 $insideControlUrl = if ($ContainerControlUrl) { $ContainerControlUrl.TrimEnd('/') } else { "$($controlUri.Scheme)://host.docker.internal:$($controlUri.Port)" }
 
@@ -31,6 +32,12 @@ if (-not (Test-Path -LiteralPath $authPath -PathType Leaf)) {
 }
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   throw "Docker CLI is not available."
+}
+$authVersion = (Get-FileHash -LiteralPath $authPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$githubAuthVersion = if (Test-Path -LiteralPath $githubTokenPath -PathType Leaf) {
+  (Get-FileHash -LiteralPath $githubTokenPath -Algorithm SHA256).Hash.ToLowerInvariant()
+} else {
+  "missing"
 }
 $network = & docker network ls --filter "name=^$companyNetwork$" --format "{{.Name}}"
 if ($network -ne $companyNetwork) {
@@ -52,6 +59,8 @@ if ($BuildImage -or -not $baseImageId) {
   & docker build --tag $baseImage $baseRoot
   if ($LASTEXITCODE -ne 0) { throw "The Codex base employee image could not be built." }
 }
+$baseImageIdentity = (& docker image inspect --format "{{.Id}}" $baseImage).Trim()
+if (-not $baseImageIdentity) { throw "The Codex base employee image identity is unavailable." }
 $hrmImageId = & docker image ls --filter "reference=$hrmImage" --format "{{.ID}}"
 if ($BuildImage -or -not $hrmImageId) {
   & docker build --tag $hrmImage $hrmRoot
@@ -67,16 +76,24 @@ $hrmInstructions = "# $($hrm.name) - $($hrm.role)`n`nDepartment: $($hrm.departme
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [IO.File]::WriteAllText((Join-Path $hrmWorkspace "AGENTS.md"), $hrmInstructions, $utf8NoBom)
 
-function Ensure-SecretSource([string]$Name, [string]$HostPath, [string]$ContainerPath) {
+function Ensure-SecretSource([string]$Name, [string]$HostPath, [string]$ContainerPath, [string]$Version) {
   $existing = & docker container ls --all --filter "name=^$Name$" --format "{{.ID}}"
-  if ($existing) { return }
-  & docker create --name $Name --entrypoint sh --volume "$HostPath`:$ContainerPath`:ro" $baseImage -c "exit 0" | Out-Null
+  if ($existing) {
+    $labels = (& docker container inspect --format "{{json .Config.Labels}}" $Name | ConvertFrom-Json)
+    if ([string]$labels.'one-man-company.secret-version' -eq $Version) { return }
+    & docker container rm --force $Name | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not replace the stale $Name credential source." }
+  }
+  & docker create --name $Name --label "one-man-company.secret-version=$Version" --entrypoint sh --volume "$HostPath`:$ContainerPath`:ro" $baseImage -c "exit 0" | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "Could not create the $Name credential source." }
 }
 
-Ensure-SecretSource "omc-auth-source" $authPath "/run/secrets/codex_auth"
+Ensure-SecretSource "omc-auth-source" $authPath "/run/secrets/codex_auth" $authVersion
 if (Test-Path -LiteralPath $githubTokenPath -PathType Leaf) {
-  Ensure-SecretSource "omc-github-source" $githubTokenPath "/run/secrets/github_token"
+  Ensure-SecretSource "omc-github-source" $githubTokenPath "/run/secrets/github_token" $githubAuthVersion
+} else {
+  $obsoleteGithubSource = & docker container ls --all --filter "name=^omc-github-source$" --format "{{.ID}}"
+  if ($obsoleteGithubSource) { & docker container rm --force "omc-github-source" | Out-Null }
 }
 
 function Send-HrmRuntimeEvent([string]$RuntimeStatus, [string]$Detail, [string]$Identity) {
@@ -92,16 +109,43 @@ function Send-HrmRuntimeEvent([string]$RuntimeStatus, [string]$Detail, [string]$
 
 $hrmId = & docker container ls --all --filter "name=^$hrmContainer$" --format "{{.ID}}"
 $hrmExists = [bool]$hrmId
+if ($hrmExists) {
+  $hrmLabels = (& docker container inspect --format "{{json .Config.Labels}}" $hrmContainer | ConvertFrom-Json)
+  $existingVersion = [string]$hrmLabels.'one-man-company.runtime-version'
+  $existingAuthVersion = [string]$hrmLabels.'one-man-company.auth-version'
+  $existingGithubAuthVersion = [string]$hrmLabels.'one-man-company.github-auth-version'
+  $authMarkerDirectory = [IO.Path]::GetFullPath((Join-Path $hrmWorkspace ".company"))
+  $authMarkerPath = [IO.Path]::GetFullPath((Join-Path $authMarkerDirectory "auth-version"))
+  if (-not $authMarkerPath.StartsWith($hrmWorkspace, [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe authentication marker path." }
+  if (-not (Test-Path -LiteralPath $authMarkerPath -PathType Leaf) -and $existingAuthVersion -match '^[0-9a-f]{64}$') {
+    New-Item -ItemType Directory -Force -Path $authMarkerDirectory | Out-Null
+    [IO.File]::WriteAllText($authMarkerPath, "$existingAuthVersion`n", $utf8NoBom)
+  }
+  if ($BuildImage -or $existingVersion -ne $runtimeVersion -or $existingAuthVersion -ne $authVersion -or $existingGithubAuthVersion -ne $githubAuthVersion) {
+    & docker container rm --force $hrmContainer | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "The obsolete HR Manager container could not be replaced." }
+    $hrmExists = $false
+  }
+}
 if ($hrm.desiredRuntimeStatus -eq "running" -and -not $hrmExists) {
   $createArgs = @(
     "create", "--name", $hrmContainer,
     "--label", "one-man-company.employee=$($hrm.id)",
     "--label", "one-man-company.docker-socket-holder=true",
+    "--label", "one-man-company.runtime-version=$runtimeVersion",
+    "--label", "one-man-company.auth-version=$authVersion",
+    "--label", "one-man-company.github-auth-version=$githubAuthVersion",
+    "--restart", "unless-stopped",
     "--network", $companyNetwork,
+    "--group-add", "0",
     "--add-host", "host.docker.internal:host-gateway",
     "--env", "OMC_EMPLOYEE_ID=$($hrm.id)",
+    "--env", "OMC_WORKER_ID=$hrmContainer",
     "--env", "OMC_CONTROL_URL=$insideControlUrl",
     "--env", "OMC_BASE_IMAGE=$baseImage",
+    "--env", "OMC_BASE_IMAGE_ID=$baseImageIdentity",
+    "--env", "OMC_AUTH_VERSION=$authVersion",
+    "--env", "OMC_GITHUB_AUTH_VERSION=$githubAuthVersion",
     "--env", "OMC_DOCKER_NETWORK=$companyNetwork",
     "--env", "OMC_TRAINING_ROOT=/company/training-cache",
     "--env", "OMC_STATE_ROOT=/company/state",
@@ -130,12 +174,8 @@ if ($hrmExists) {
   $hrmStatus = (& docker container inspect --format "{{.State.Status}}" $hrmContainer).Trim()
   $identity = (& docker container inspect --format "{{.State.StartedAt}}-{{.State.FinishedAt}}" $hrmContainer).Trim()
   Send-HrmRuntimeEvent $hrmStatus "Docker state observed by the minimal host bootstrap." $identity
-  if ($hrmStatus -eq "running") {
-    & docker exec $hrmContainer /opt/one-man-company/reconcile
-    if ($LASTEXITCODE -ne 0) { throw "The HR Manager could not reconcile employee containers." }
-  }
 } elseif ($hrm.runtimeStatus -ne "not_provisioned") {
   Send-HrmRuntimeEvent "not_found" "The HR Manager container was not found by the host bootstrap." (Get-Date -Format "yyyyMMddHH")
 }
 
-Write-Output "HR Manager bootstrap and reconciliation complete."
+Write-Output "HR Manager bootstrap complete; its private reconciliation loop is active."

@@ -163,20 +163,23 @@ export async function POST(request: Request) {
       if (!eventKey || !runtimeStatuses.includes(runtimeStatus)) return Response.json({ error: "A valid runtime event is required" }, { status: 400 });
 
       const duplicate = await d1.prepare("SELECT id FROM runtime_events WHERE event_key = ?").bind(eventKey).first();
+      const employee = await d1.prepare("SELECT name, status FROM employees WHERE id = ?")
+        .bind(employeeId).first<{ name: string; status: EmployeeStatus }>();
+      if (!employee) return Response.json({ error: "Employee not found" }, { status: 404 });
+      const employeeStatus = mapDockerStatus(runtimeStatus, employee.status);
+      const statements = [
+        d1.prepare(`UPDATE employees SET runtime_status = ?, status = ?, last_runtime_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(runtimeStatus, employeeStatus, employeeId),
+      ];
       if (!duplicate) {
-        const employee = await d1.prepare("SELECT name, status FROM employees WHERE id = ?")
-          .bind(employeeId).first<{ name: string; status: EmployeeStatus }>();
-        if (!employee) return Response.json({ error: "Employee not found" }, { status: 404 });
-        const employeeStatus = mapDockerStatus(runtimeStatus, employee.status);
-        await d1.batch([
-          d1.prepare(`UPDATE employees SET runtime_status = ?, status = ?, last_runtime_at = CURRENT_TIMESTAMP,
-            updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(runtimeStatus, employeeStatus, employeeId),
+        statements.push(
           d1.prepare(`INSERT INTO runtime_events (event_key, employee_id, container_status, employee_status, detail)
             VALUES (?, ?, ?, ?, ?)`).bind(eventKey, employeeId, runtimeStatus, employeeStatus, detail),
           d1.prepare("INSERT INTO activity (message, tone) VALUES (?, ?)")
             .bind(`${employee.name}'s container reported ${runtimeStatus}.`, runtimeStatus === "dead" ? "failed" : runtimeStatus === "running" ? "success" : "neutral"),
-        ]);
+        );
       }
+      await d1.batch(statements);
     } else {
       return Response.json({ error: "Unknown employee action" }, { status: 400 });
     }

@@ -2,12 +2,13 @@
 
 The portal is the durable control plane. Docker is the local data plane. The only employee with `/var/run/docker.sock` is Aurelia, the HR Manager.
 
-## Two-stage bootstrap
+## Continuous bootstrap and dispatch
 
-1. `runtime/bridge.ps1` is a minimal host bootstrap. It verifies the D1 socket policy, builds the base and HRM images, creates credential source mounts, starts or stops `omc-hrm`, and reports Aurelia's observed state.
-2. The bootstrap invokes `/opt/one-man-company/reconcile` inside Aurelia. HRM reads approved employee records, creates persistent workspace/skill/secret volumes, starts or stops all other employee containers, and reports observed Docker state.
+1. `runtime/Start-Company.ps1` builds and runs the portal on `127.0.0.1:3000`, persists its local D1 state, creates a private bridge token, and calls the minimal HRM bootstrap.
+2. `runtime/bridge.ps1` verifies the D1 socket policy, builds the base and HRM images when requested, creates credential source mounts, starts `omc-hrm`, and reports Aurelia's observed state.
+3. Aurelia continuously reconciles approved employees, claims one durable task or Secretary inquiry at a time, invokes `codex exec --json` inside the assigned container, renews its lease, records allowlisted event summaries, and accepts only schema-valid results.
 
-The host bootstrap never creates ordinary employee containers. No ordinary employee receives the Docker socket. An employee container is idle until a later executor invokes `codex exec` for an approved task.
+The host bootstrap never creates ordinary employee containers. No ordinary employee receives the Docker socket. A task remains queued until the dispatcher has both an assigned employee and an observed running container.
 
 ## Images
 
@@ -15,22 +16,26 @@ The host bootstrap never creates ordinary employee containers. No ordinary emplo
 
 `runtime/hrm/Dockerfile` extends that same base with a Docker CLI and the reviewed reconciliation program. Socket access is supplied only when the host creates Aurelia.
 
-Skills are copied from the reviewed Training Center cache into an employee-specific volume, then into `/workspace/.agents/skills` by the base entrypoint. Permanent Experts keep their mounted workspace even while stopped. Contractors use task-scoped policy and cannot close their task until the portal accepts a handoff and knowledge contribution; automated archive/removal follows in the executor milestone.
+Skills are copied from the reviewed Training Center cache into an employee-specific volume, then into `/workspace/.agents/skills` by the base entrypoint. Permanent Experts keep their mounted workspace even while stopped. Contractors use task-scoped policy and cannot close their task until the portal accepts a handoff and knowledge contribution.
 
 ## Credential boundary
 
 `assets/agent_auth/auth.json` is ignored by Git and never copied into an image. The bootstrap exposes it through an auth-only source container. The base entrypoint copies it to `$CODEX_HOME/auth.json` with mode `0600`. The file is never printed by these scripts.
 
-An optional `assets/github_auth/token` is also ignored. Only Project Manager containers receive its source mount, and their entrypoint exports it as `GH_TOKEN`. Recording a project in the portal does not create its repository; a PM may create the approved public `VincentL01` repository only when an executor is authorized to run that side effect.
+An optional `assets/github_auth/token` is also ignored. `runtime/Import-GitHubCredential.ps1` safely imports the existing `VincentL01` Git Credential Manager identity and refuses to write unless the destination is ignored. Only Project Manager containers receive its versioned source mount; each task runner loads it directly as `GH_TOKEN` without printing it. Recording a project in the portal does not create its repository; a PM may create the approved public `VincentL01` repository only when an executor is authorized to run that side effect.
 
 This `auth.json` transplant is a user-requested compatibility mechanism, not a documented Codex authentication API. Production automation should use a documented API-key or managed access-token flow with explicit rotation and revocation.
 
-## Reconcile once
+If Codex reports that the copied ChatGPT refresh token was already used, replace and save the ignored source file with a freshly authenticated owner session. Aurelia checks its SHA-256 fingerprint every five seconds, recreates employee containers whose fingerprint changed, and automatically requeues only jobs whose latest failure was `authentication_required`. Persistent workspace, skill, and secret volumes survive the container replacement. No restart is normally required; rerun `runtime/Start-Company.ps1` only if Docker Desktop does not expose the changed bind-mounted file.
+
+The runner enables `sandbox_workspace_write.network_access` only when HRM has provisioned a Project Manager with `project-write` policy. A retry carries the previous run ID as its workspace ID, preserving existing commits and delivery worktrees while a GitHub blocker is repaired.
+
+## Start the company
 
 Start the portal and Stalwart network, then run:
 
 ```powershell
-.\runtime\bridge.ps1 -BuildImage
+.\runtime\Start-Company.ps1 -BuildImages
 ```
 
-Later reconciliations omit `-BuildImage`. Set `OMC_RUNTIME_BRIDGE_TOKEN` when the API is configured with the matching `RUNTIME_BRIDGE_TOKEN` secret. `-ContainerControlUrl` can name a portal service on the private Docker network when the host development server is intentionally loopback-only.
+Later starts omit `-BuildImages`. The generated bridge token remains under ignored `runtime/state/`; the portal is published only on loopback and employees reach it as `omc-portal` on the private network.

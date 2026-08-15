@@ -81,6 +81,8 @@ To refresh the company, replace and save the ignored `assets/agent_auth/auth.jso
 
 Project Manager jobs receive outbound network access inside Codex's `workspace-write` sandbox so they can clone, push, and open approved `VincentL01` pull requests. Other roles remain network-disabled by default. Retried tasks reuse their prior run workspace, so a committed branch is preserved when a network or credential blocker is resolved.
 
+`runtime/Start-Company.ps1` also starts a hidden host merge watcher. It polls only `VincentL01/LaAzienda`, verifies that the current `codex/*` pull request was merged into `main` by `VincentL01`, requires a clean working tree, then runs `git switch main` and `git pull --ff-only origin main`. After the pull it rebuilds the local company and records the synchronized PR and commit in D1 and the activity feed. Dirty, divergent, unrelated, or directly pushed branches are left untouched.
+
 Codex officially loads repository skills from `.agents/skills`; employee containers use that location after copying assignments from the Training Center cache. See [Codex skills](https://learn.chatgpt.com/docs/build-skills) and [AGENTS.md guidance](https://learn.chatgpt.com/docs/agent-configuration/agents-md).
 
 ## Character packs

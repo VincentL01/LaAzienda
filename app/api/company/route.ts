@@ -17,7 +17,7 @@ import { findActiveTaskConflict, type ActiveTaskIdentity } from "@/lib/task-poli
 
 async function readCompany(): Promise<CompanyState> {
   const d1 = env.DB;
-  const [employees, tasks, mappings, activity, assignedSkills, projects, knowledge, handoffs, runs, runEvents, secretaryInquiries] = await Promise.all([
+  const [employees, tasks, mappings, activity, assignedSkills, projects, knowledge, handoffs, runs, runEvents, secretaryInquiries, repositorySyncs] = await Promise.all([
     d1.prepare(`SELECT employees.id, employees.name, role, department, status, pet_id AS petId,
       character_packs.spritesheet_path AS spritesheetPath,
       role_profile_id AS roleProfileId, employment_type AS employmentType,
@@ -67,6 +67,9 @@ async function readCompany(): Promise<CompanyState> {
     d1.prepare(`SELECT id, question, status, answer, run_id AS runId,
       created_at AS createdAt, answered_at AS answeredAt, updated_at AS updatedAt
       FROM secretary_inquiries ORDER BY created_at DESC LIMIT 30`).all(),
+    d1.prepare(`SELECT id, repository, branch, source_branch AS sourceBranch,
+      commit_sha AS commitSha, pull_number AS pullNumber, synced_at AS syncedAt
+      FROM repository_syncs ORDER BY synced_at DESC, id DESC LIMIT 20`).all(),
   ]);
 
   const employeeRows = employees.results.map((row) => {
@@ -104,6 +107,7 @@ async function readCompany(): Promise<CompanyState> {
     runs: runRows,
     runEvents: runEvents.results as unknown as CompanyState["runEvents"],
     secretaryInquiries: secretaryInquiries.results as unknown as CompanyState["secretaryInquiries"],
+    repositorySyncs: repositorySyncs.results as unknown as CompanyState["repositorySyncs"],
   };
 }
 
@@ -418,6 +422,28 @@ export async function POST(request: Request) {
         d1.prepare("UPDATE employees SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(status, employeeId),
         d1.prepare("INSERT INTO activity (message, tone) VALUES (?, ?)").bind(`${employee.name} is now ${status}.`, status),
       ]);
+    } else if (action === "reportRepositorySync") {
+      if (!bridgeAuthorized(request)) return Response.json({ error: "Runtime bridge authorization failed" }, { status: 403 });
+      const repository = typeof body.repository === "string" ? body.repository.trim() : "";
+      const branch = typeof body.branch === "string" ? body.branch.trim() : "";
+      const sourceBranch = typeof body.sourceBranch === "string" ? body.sourceBranch.trim() : "";
+      const commitSha = typeof body.commitSha === "string" ? body.commitSha.trim().toLowerCase() : "";
+      const pullNumber = Number(body.pullNumber);
+      if (repository !== "VincentL01/LaAzienda" || branch !== "main"
+        || !/^codex\/[A-Za-z0-9._/-]{1,100}$/.test(sourceBranch)
+        || !/^[0-9a-f]{40}$/.test(commitSha)
+        || !Number.isSafeInteger(pullNumber) || pullNumber < 1) {
+        return Response.json({ error: "Invalid repository synchronization evidence" }, { status: 400 });
+      }
+      const syncId = `repository-sync:${commitSha}`;
+      const inserted = await d1.prepare(`INSERT OR IGNORE INTO repository_syncs (
+        id, repository, branch, source_branch, commit_sha, pull_number
+      ) VALUES (?, ?, 'main', ?, ?, ?)`)
+        .bind(syncId, repository, sourceBranch, commitSha, pullNumber).run();
+      if ((inserted.meta.changes ?? 0) > 0) {
+        await d1.prepare("INSERT INTO activity (message, tone) VALUES (?, 'success')")
+          .bind(`Source watcher synchronized ${sourceBranch} through PR #${pullNumber} to main at ${commitSha.slice(0, 7)}.`).run();
+      }
     } else if (action === "saveMappings") {
       const mappings = Array.isArray(body.mappings) ? body.mappings as AnimationMapping[] : [];
       if (mappings.length !== employeeStatuses.length) return Response.json({ error: "Every employee status needs an animation" }, { status: 400 });

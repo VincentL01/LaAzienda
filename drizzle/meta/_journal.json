@@ -43,6 +43,13 @@
       "when": 1786770464541,
       "tag": "0005_tiny_khan",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786813104050,
+      "tag": "0006_safe_vector",
+      "breakpoints": true
     }
   ]
 }

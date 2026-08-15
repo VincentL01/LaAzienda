@@ -1,18 +1,20 @@
 [CmdletBinding()]
 param(
-  [switch]$BuildImages
+  [switch]$BuildImages,
+  [switch]$SkipMergeWatcher
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $stateRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "state"))
 $bridgeTokenPath = [IO.Path]::GetFullPath((Join-Path $stateRoot "runtime-bridge-token"))
+$mergeWatcherPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "Watch-GitHubMerges.ps1"))
 $portalImage = "one-man-company/company-portal:local"
 $portalContainer = "omc-portal"
 $companyNetwork = "one-man-company"
-$portalVersion = "4"
+$portalVersion = "5"
 
-foreach ($resolvedPath in @($stateRoot, $bridgeTokenPath)) {
+foreach ($resolvedPath in @($stateRoot, $bridgeTokenPath, $mergeWatcherPath)) {
   if (-not $resolvedPath.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Resolved company runtime path left the repository boundary."
   }
@@ -92,4 +94,14 @@ if (-not $ready) { throw "The Company Portal did not become ready on loopback." 
   -BuildImage:$BuildImages
 if ($LASTEXITCODE -ne 0) { throw "The HR Manager bootstrap failed." }
 
-Write-Output "Company Portal, HR Manager, and employee dispatcher are running."
+if (-not $SkipMergeWatcher) {
+  if (-not (Test-Path -LiteralPath $mergeWatcherPath -PathType Leaf)) { throw "The GitHub merge watcher is missing." }
+  $powerShellPath = (Get-Process -Id $PID).Path
+  $watcherArguments = @(
+    "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$mergeWatcherPath`"",
+    "-RepositoryRoot", "`"$repoRoot`"", "-ControlUrl", "http://127.0.0.1:3000"
+  )
+  Start-Process -FilePath $powerShellPath -ArgumentList $watcherArguments -WorkingDirectory $repoRoot -WindowStyle Hidden | Out-Null
+}
+
+Write-Output "Company Portal, HR Manager, employee dispatcher, and GitHub merge watcher are running."

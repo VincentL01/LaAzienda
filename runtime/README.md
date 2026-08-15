@@ -7,6 +7,7 @@ The portal is the durable control plane. Docker is the local data plane. The onl
 1. `runtime/Start-Company.ps1` builds and runs the portal on `127.0.0.1:3000`, persists its local D1 state, creates a private bridge token, and calls the minimal HRM bootstrap.
 2. `runtime/bridge.ps1` verifies the D1 socket policy, builds the base and HRM images when requested, creates credential source mounts, starts `omc-hrm`, and reports Aurelia's observed state.
 3. Aurelia continuously reconciles approved employees, claims one durable task or Secretary inquiry at a time, invokes `codex exec --json` inside the assigned container, renews its lease, records allowlisted event summaries, and accepts only schema-valid results.
+4. `runtime/Watch-GitHubMerges.ps1` runs hidden on the host. It verifies owner-merged `codex/*` pull requests, switches a clean merged checkout to `main`, pulls with `--ff-only`, rebuilds the company, and records idempotent synchronization evidence in D1.
 
 The host bootstrap never creates ordinary employee containers. No ordinary employee receives the Docker socket. A task remains queued until the dispatcher has both an assigned employee and an observed running container.
 
@@ -39,3 +40,5 @@ Start the portal and Stalwart network, then run:
 ```
 
 Later starts omit `-BuildImages`. The generated bridge token remains under ignored `runtime/state/`; the portal is published only on loopback and employees reach it as `omc-portal` on the private network.
+
+The merge watcher never resets files, force-pulls, pushes, or switches a dirty checkout. It accepts only the exact `https://github.com/VincentL01/LaAzienda.git` origin, the `main` base, `codex/*` heads, and pull requests whose GitHub `merged_by` identity is `VincentL01`. Use `-SkipMergeWatcher` only for the watcher's own post-merge restart or controlled diagnostics.

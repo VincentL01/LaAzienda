@@ -1,0 +1,7 @@
+{
+  "id": "saber-alter-pixel",
+  "displayName": "Saber Alter Pixel",
+  "description": "A pixel-art chibi dark knight pet with pale hair, black dress armor, and a crimson black sword.",
+  "spritesheetPath": "spritesheet.webp",
+  "kind": "person"
+}

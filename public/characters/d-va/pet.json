@@ -1,0 +1,7 @@
+{
+  "id": "d-va",
+  "displayName": "D.Va",
+  "description": "A compact pixel-art D.Va pet integrated with a tiny pink TOKKI MEKA.",
+  "spritesheetPath": "spritesheet.webp",
+  "kind": "object"
+}

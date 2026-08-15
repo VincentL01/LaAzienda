@@ -1,0 +1,52 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Asset directories are local-only because they can contain credentials and licensed character packs.
+/assets/*/
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/.vinext/
+/out/
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+.npm-cache/
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+/dist/
+/.wrangler/
+/outputs/
+/work/
+*.tsbuildinfo
+
+# Local agent credentials and runtime material
+/assets/agent_auth/auth.json
+/assets/github_auth/token
+/training-center/cache/
+/training-center/work/
+/runtime/state/
+/infrastructure/mail/.env.local

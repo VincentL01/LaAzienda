@@ -1,0 +1,34 @@
+name: one-man-company-mail
+
+services:
+  stalwart:
+    image: stalwartlabs/stalwart:v0.16
+    container_name: omc-stalwart
+    restart: unless-stopped
+    env_file:
+      - .env.local
+    environment:
+      STALWART_PUBLIC_URL: https://mail.one-man-company.test:2443
+    ports:
+      - "127.0.0.1:2443:443"
+      - "127.0.0.1:8088:8080"
+      - "127.0.0.1:2525:25"
+      - "127.0.0.1:2587:587"
+      - "127.0.0.1:2993:993"
+    volumes:
+      - stalwart-config:/etc/stalwart
+      - stalwart-data:/var/lib/stalwart
+    networks:
+      company:
+        aliases:
+          - stalwart
+          - mail.one-man-company.test
+
+volumes:
+  stalwart-config:
+  stalwart-data:
+
+networks:
+  company:
+    external: true
+    name: one-man-company

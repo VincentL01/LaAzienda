@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1786640491574,
+      "tag": "0000_smooth_crystal",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786643201358,
+      "tag": "0001_late_shape",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786647574912,
+      "tag": "0002_amazing_namora",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1786735368595,
+      "tag": "0003_perpetual_stick",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,162 @@
+export const employeeStatuses = ["offline", "starting", "idle", "planning", "working", "waiting", "review", "done", "failed"] as const;
+export const taskStatuses = ["queued", "working", "review", "done"] as const;
+export const animationStates = ["idle", "running-right", "running-left", "waving", "jumping", "failed", "waiting", "running", "review"] as const;
+export const runtimeStatuses = ["not_provisioned", "created", "running", "paused", "restarting", "removing", "exited", "dead", "not_found"] as const;
+export const desiredRuntimeStatuses = ["running", "stopped"] as const;
+export const cacheStatuses = ["requested", "cached", "failed"] as const;
+export const mailboxStatuses = ["requested", "ready", "failed"] as const;
+export const mailStatuses = ["queued", "sending", "sent", "failed"] as const;
+export const employmentTypes = ["executive", "expert", "contractor"] as const;
+export const workspacePolicies = ["persistent", "task-scoped"] as const;
+export const resourceAccessPolicies = ["read-all", "docker-provisioner", "project-write", "task-scoped"] as const;
+export const petPolicies = ["fixed", "random"] as const;
+
+export type EmployeeStatus = (typeof employeeStatuses)[number];
+export type TaskStatus = (typeof taskStatuses)[number];
+export type AnimationState = (typeof animationStates)[number];
+export type RuntimeStatus = (typeof runtimeStatuses)[number];
+export type DesiredRuntimeStatus = (typeof desiredRuntimeStatuses)[number];
+export type CacheStatus = (typeof cacheStatuses)[number];
+export type MailboxStatus = (typeof mailboxStatuses)[number];
+export type MailStatus = (typeof mailStatuses)[number];
+export type EmploymentType = (typeof employmentTypes)[number];
+export type WorkspacePolicy = (typeof workspacePolicies)[number];
+export type ResourceAccessPolicy = (typeof resourceAccessPolicies)[number];
+export type PetPolicy = (typeof petPolicies)[number];
+
+export interface Employee {
+  id: string; name: string; role: string; department: string; status: EmployeeStatus;
+  petId: string; spritesheetPath?: string | null; roleProfileId: string | null; emailAddress: string | null;
+  employmentType: EmploymentType; workspacePolicy: WorkspacePolicy;
+  resourceAccess: ResourceAccessPolicy; dockerSocketAccess: boolean; handoffRequired: boolean;
+  mailboxStatus: MailboxStatus; systemPrompt: string; containerName: string | null;
+  desiredRuntimeStatus: DesiredRuntimeStatus; runtimeStatus: RuntimeStatus;
+  lastRuntimeAt: string | null; currentTaskId: string | null; createdAt: string;
+  skills: TrainingSkill[];
+}
+
+export interface CompanyRole {
+  id: string; title: string; department: string; mission: string; systemPrompt: string;
+  recommendedSkills: string[]; employmentType: EmploymentType; workspacePolicy: WorkspacePolicy;
+  resourceAccess: ResourceAccessPolicy; dockerSocketAccess: boolean; handoffRequired: boolean;
+  petPolicy: PetPolicy; fixedPetId: string | null; isSingleton: boolean;
+  harness: string; modelPolicy: string; isCore: boolean; sortOrder: number;
+}
+
+export interface RuntimeProfile {
+  id: string; imageTag: string; harness: string; baseTools: string[];
+  codexHome: string; workspacePath: string; skillsPath: string;
+  authContract: string; dockerSocketPolicy: string; description: string;
+}
+
+export interface MailMessage {
+  id: string; messageKey: string; senderEmployeeId: string; senderName: string;
+  senderEmail: string | null; recipientEmployeeId: string; recipientName: string;
+  recipientEmail: string | null; subject: string; body: string; status: MailStatus;
+  transport: "stalwart"; lastError: string | null; createdAt: string; sentAt: string | null;
+}
+
+export interface TrainingSkill {
+  id: string; packageRef: string; name: string; description: string;
+  sourceUrl: string | null; installCommand: string; cacheStatus: CacheStatus;
+  createdAt: string; cachedAt: string | null;
+}
+
+export interface CharacterPack {
+  id: string; displayName: string; description: string; sourceUrl: string | null;
+  installCommand: string | null; spritesheetPath: string | null;
+  spriteVersion: number; cacheStatus: CacheStatus; createdAt: string; cachedAt: string | null;
+}
+
+export interface RuntimeEvent {
+  id: number; eventKey: string; employeeId: string; containerStatus: RuntimeStatus;
+  employeeStatus: EmployeeStatus; detail: string; createdAt: string;
+}
+
+export interface WorkforceState {
+  employees: Employee[]; skills: TrainingSkill[]; characters: CharacterPack[];
+  runtimeEvents: RuntimeEvent[]; roles: CompanyRole[]; runtimeProfile: RuntimeProfile;
+}
+
+export interface MailroomState {
+  employees: Employee[]; roles: CompanyRole[]; messages: MailMessage[];
+  mailDomain: string; transport: "stalwart"; runtimeProfile: RuntimeProfile;
+}
+
+export interface TrainingCenterState {
+  skills: TrainingSkill[]; characters: CharacterPack[];
+  discoveryCommand: string; petCatalogUrl: string;
+}
+
+export interface CompanyTask {
+  id: string; title: string; brief: string; status: TaskStatus;
+  priority: "low" | "normal" | "high"; assigneeId: string | null;
+  projectId: string | null; handoffRequired: boolean;
+  createdAt: string; updatedAt: string;
+}
+
+export interface CompanyProject {
+  id: string; name: string; brief: string; githubOwner: string;
+  repositoryName: string | null; repositoryUrl: string | null;
+  visibility: "public"; status: "planned" | "approved" | "provisioned" | "active" | "archived";
+  managerId: string | null; createdAt: string; updatedAt: string;
+}
+
+export interface KnowledgeEntry {
+  id: string; title: string; summary: string; sourceType: string;
+  sourceRef: string | null; contributedBy: string | null; taskId: string | null;
+  status: "candidate" | "approved"; createdAt: string;
+}
+
+export interface ContractorHandoff {
+  id: string; handoffKey: string; taskId: string; employeeId: string;
+  summary: string; deliverables: string; decisions: string; followUp: string;
+  knowledgeEntryId: string; status: "accepted"; createdAt: string;
+}
+
+export interface AnimationMapping {
+  employeeStatus: EmployeeStatus; animationState: AnimationState; speedMs: number;
+}
+
+export interface ActivityItem {
+  id: number; message: string; tone: string; createdAt: string;
+}
+
+export interface CompanyState {
+  employees: Employee[]; tasks: CompanyTask[]; mappings: AnimationMapping[]; activity: ActivityItem[];
+  projects: CompanyProject[]; knowledge: KnowledgeEntry[]; handoffs: ContractorHandoff[];
+}
+
+export const spriteTracks: Record<AnimationState, { row: number; frames: number; label: string }> = {
+  idle: { row: 0, frames: 7, label: "Idle" },
+  "running-right": { row: 1, frames: 8, label: "Move right" },
+  "running-left": { row: 2, frames: 8, label: "Move left" },
+  waving: { row: 3, frames: 4, label: "Celebrate" },
+  jumping: { row: 4, frames: 5, label: "Jump" },
+  failed: { row: 5, frames: 8, label: "Failed" },
+  waiting: { row: 6, frames: 7, label: "Waiting" },
+  running: { row: 7, frames: 6, label: "Working" },
+  review: { row: 8, frames: 6, label: "Review" },
+};
+
+export const statusLabels: Record<EmployeeStatus, string> = {
+  offline: "Offline", starting: "Starting", idle: "Available", planning: "Planning", working: "Building", waiting: "Needs you",
+  review: "Reviewing", done: "Shipped", failed: "Blocked",
+};
+
+export const runtimeStatusLabels: Record<RuntimeStatus, string> = {
+  not_provisioned: "Not provisioned", created: "Created", running: "Running",
+  paused: "Paused", restarting: "Restarting", removing: "Removing",
+  exited: "Stopped", dead: "Failed", not_found: "Missing",
+};
+
+export function mapDockerStatus(status: RuntimeStatus, current: EmployeeStatus): EmployeeStatus {
+  if (status === "running") {
+    return ["planning", "working", "waiting", "review", "done"].includes(current) ? current : "idle";
+  }
+  if (status === "created" || status === "restarting") return "starting";
+  if (status === "paused") return "waiting";
+  if (status === "dead") return "failed";
+  if (["not_provisioned", "removing", "exited", "not_found"].includes(status)) return "offline";
+  return current;
+}

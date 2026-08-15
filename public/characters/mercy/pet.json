@@ -1,0 +1,7 @@
+{
+  "id": "mercy",
+  "displayName": "Mercy",
+  "description": "A compact pixel-art Mercy pet with Valkyrie wings and Caduceus Staff.",
+  "spritesheetPath": "spritesheet.webp",
+  "kind": "object"
+}

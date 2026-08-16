@@ -79,6 +79,11 @@ export interface RuntimeEvent {
   employeeStatus: EmployeeStatus; detail: string; createdAt: string;
 }
 
+export interface RepositorySync {
+  id: string; repository: string; branch: "main"; sourceBranch: string;
+  commitSha: string; pullNumber: number | null; syncedAt: string;
+}
+
 export interface WorkforceState {
   employees: Employee[]; skills: TrainingSkill[]; characters: CharacterPack[];
   runtimeEvents: RuntimeEvent[]; roles: CompanyRole[]; runtimeProfile: RuntimeProfile;
@@ -152,6 +157,7 @@ export interface CompanyState {
   employees: Employee[]; tasks: CompanyTask[]; mappings: AnimationMapping[]; activity: ActivityItem[];
   projects: CompanyProject[]; knowledge: KnowledgeEntry[]; handoffs: ContractorHandoff[];
   runs: AgentRun[]; runEvents: AgentRunEvent[]; secretaryInquiries: SecretaryInquiry[];
+  repositorySyncs: RepositorySync[];
 }
 
 export const spriteTracks: Record<AnimationState, { row: number; frames: number; label: string }> = {

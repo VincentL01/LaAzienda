@@ -211,6 +211,23 @@ export const runtimeEvents = sqliteTable(
   ],
 );
 
+export const repositorySyncs = sqliteTable(
+  "repository_syncs",
+  {
+    id: text("id").primaryKey(),
+    repository: text("repository").notNull(),
+    branch: text("branch").notNull(),
+    sourceBranch: text("source_branch").notNull(),
+    commitSha: text("commit_sha").notNull(),
+    pullNumber: integer("pull_number"),
+    syncedAt: text("synced_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("idx_repository_syncs_commit").on(table.repository, table.commitSha),
+    index("idx_repository_syncs_synced_at").on(table.syncedAt),
+  ],
+);
+
 export const tasks = sqliteTable(
   "tasks",
   {

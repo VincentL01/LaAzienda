@@ -383,6 +383,16 @@ async function initialize() {
       detail TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`),
+    d1.prepare(`CREATE TABLE IF NOT EXISTS repository_syncs (
+      id TEXT PRIMARY KEY,
+      repository TEXT NOT NULL,
+      branch TEXT NOT NULL,
+      source_branch TEXT NOT NULL,
+      commit_sha TEXT NOT NULL,
+      pull_number INTEGER,
+      synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(repository, commit_sha)
+    )`),
     d1.prepare(`CREATE TABLE IF NOT EXISTS agent_runs (
       id TEXT PRIMARY KEY,
       job_type TEXT NOT NULL,
@@ -491,6 +501,8 @@ async function initialize() {
     d1.prepare("CREATE INDEX IF NOT EXISTS idx_character_packs_cache_status ON character_packs(cache_status)"),
     d1.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_events_event_key ON runtime_events(event_key)"),
     d1.prepare("CREATE INDEX IF NOT EXISTS idx_runtime_events_employee_created ON runtime_events(employee_id, created_at)"),
+    d1.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_repository_syncs_commit ON repository_syncs(repository, commit_sha)"),
+    d1.prepare("CREATE INDEX IF NOT EXISTS idx_repository_syncs_synced_at ON repository_syncs(synced_at)"),
     d1.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runs_active_job ON agent_runs(job_type, job_id) WHERE status IN ('claimed', 'running')"),
     d1.prepare("CREATE INDEX IF NOT EXISTS idx_agent_runs_employee_created ON agent_runs(employee_id, created_at)"),
     d1.prepare("CREATE INDEX IF NOT EXISTS idx_agent_runs_task_created ON agent_runs(task_id, created_at)"),

@@ -6,6 +6,11 @@
 .company-alert b { flex: 0 0 auto; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .company-alert p { margin: 0; color: #d3aa96; font: 700 9px/1.45 Consolas, monospace; }
 .company-alert code { color: #ffe9c9; }
+.source-sync { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 14px; margin: -8px 0 20px; padding: 10px 14px; border: 1px solid #4b4438; background: #17130f; }
+.source-sync-label { color: #8de0a0; font: 900 9px/1 Consolas, monospace; letter-spacing: .08em; white-space: nowrap; }
+.source-sync-label i { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: #64d77d; box-shadow: 0 0 8px #64d77d; }
+.source-sync b { color: #efe3c6; font: 900 11px Consolas, monospace; }
+.source-sync small { color: #8e8472; font: 700 9px/1.4 Consolas, monospace; text-align: right; }
 
 .company-floor {
   display: grid;
@@ -137,6 +142,8 @@
 
 @media (max-width: 650px) {
   .company-alert { align-items: flex-start; flex-direction: column; }
+  .source-sync { grid-template-columns: 1fr; }
+  .source-sync small { text-align: left; }
   .company-floor { grid-template-columns: 1fr; }
   .office-zone { min-height: 300px; }
   .zone-occupants { min-height: 246px; }

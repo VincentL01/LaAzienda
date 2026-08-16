@@ -160,6 +160,7 @@ export function CompanyDashboard() {
       && company.runs.find((run) => run.jobType === "secretary-inquiry" && run.jobId === inquiry.id)?.error === codexAuthenticationRequiredMessage);
   const githubAuthenticationBlocked = company.tasks.some((task) => task.status === "review"
     && company.runs.find((run) => run.taskId === task.id)?.error === githubAuthenticationRequiredMessage);
+  const latestRepositorySync = company.repositorySyncs[0] ?? null;
 
   return (
     <main className="dashboard-shell">
@@ -199,6 +200,17 @@ export function CompanyDashboard() {
         <article><span className="metric-icon active">GO</span><div><b>{counts.active}</b><small>In progress</small></div></article>
         <article><span className="metric-icon review">QA</span><div><b>{counts.review}</b><small>Needs review</small></div></article>
         <article><span className="metric-icon done">OK</span><div><b>{counts.done}</b><small>Shipped</small></div></article>
+      </section>
+
+      <section className="source-sync" aria-label="Repository synchronization status">
+        <span className="source-sync-label"><i /> SOURCE WATCHER</span>
+        {latestRepositorySync ? <>
+          <b>main @ {latestRepositorySync.commitSha.slice(0, 7)}</b>
+          <small>PR #{latestRepositorySync.pullNumber} from {latestRepositorySync.sourceBranch} synchronized {new Date(`${latestRepositorySync.syncedAt}Z`).toLocaleString()}</small>
+        </> : <>
+          <b>Watching VincentL01/LaAzienda</b>
+          <small>A clean merged codex/* branch will switch to main, pull fast-forward-only, and refresh the company.</small>
+        </>}
       </section>
 
       {authenticationBlocked ? <section className="company-alert" role="status">

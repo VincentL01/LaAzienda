@@ -1,4 +1,4 @@
-import { statusLabels, type AnimationMapping, type CompanyTask, type Employee, type EmployeeStatus } from "@/lib/company";
+import { statusLabels, type AgentRun, type AnimationMapping, type CompanyTask, type Employee, type EmployeeStatus } from "@/lib/company";
 import { EmployeeSprite } from "./EmployeeSprite";
 
 const officeZones: Array<{
@@ -22,14 +22,21 @@ export function officeZoneForStatus(status: EmployeeStatus) {
 interface LiveOfficeProps {
   employees: Employee[];
   tasks: CompanyTask[];
+  runs: AgentRun[];
   mappings: AnimationMapping[];
   selectedEmployeeId: string | null;
   onSelectEmployee: (employeeId: string) => void;
 }
 
-export function LiveOffice({ employees, tasks, mappings, selectedEmployeeId, onSelectEmployee }: LiveOfficeProps) {
+export function LiveOffice({ employees, tasks, runs, mappings, selectedEmployeeId, onSelectEmployee }: LiveOfficeProps) {
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const mappingByStatus = new Map(mappings.map((mapping) => [mapping.employeeStatus, mapping]));
+  const activeRunByEmployee = new Map<string, AgentRun>();
+  for (const run of runs) {
+    if (["claimed", "running"].includes(run.status) && !activeRunByEmployee.has(run.employeeId)) {
+      activeRunByEmployee.set(run.employeeId, run);
+    }
+  }
 
   return <div className="company-floor" aria-label="Live company office">
     {officeZones.map((zone) => {
@@ -41,15 +48,20 @@ export function LiveOffice({ employees, tasks, mappings, selectedEmployeeId, onS
           <div className="zone-occupants">
             {occupants.map((employee) => {
               const task = employee.currentTaskId ? taskById.get(employee.currentTaskId) : undefined;
+              const activeRun = activeRunByEmployee.get(employee.id);
+              const workEvidence = activeRun?.lastEvent;
               const mapping = mappingByStatus.get(employee.status);
               return <button
                 className={`office-employee ${selectedEmployeeId === employee.id ? "selected" : ""}`}
                 key={employee.id}
                 onClick={() => onSelectEmployee(employee.id)}
                 aria-pressed={selectedEmployeeId === employee.id}
-                aria-label={`Inspect ${employee.name}, ${statusLabels[employee.status]}`}
+                aria-label={`Inspect ${employee.name}, ${statusLabels[employee.status]}${workEvidence ? `, ${workEvidence}` : ""}`}
               >
-                <span className="employee-work-label">{task?.title ?? statusLabels[employee.status]}</span>
+                <span className="employee-work-label">
+                  <b>{task?.title ?? activeRun?.promptSummary ?? statusLabels[employee.status]}</b>
+                  {workEvidence ? <small>{workEvidence}</small> : null}
+                </span>
                 <EmployeeSprite
                   animation={mapping?.animationState ?? "idle"}
                   speedMs={mapping?.speedMs}

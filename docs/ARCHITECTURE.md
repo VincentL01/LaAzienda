@@ -4,7 +4,7 @@
 
 `CEO objective -> Project Manager brief -> owned task -> HRM-provisioned Codex employee -> evidence/review -> contractor handoff -> approved company knowledge -> shipped`
 
-The current vertical slice reaches durable project/task ownership, employee policy, real container provisioning, serialized `codex exec` dispatch, live run evidence, Secretary briefings, company mail, contractor handoff, and knowledge retention. The portal never presents placeholder output as agent work.
+The current vertical slice reaches durable project/task ownership, employee policy, real container provisioning, serialized `codex exec` dispatch, live run evidence, Secretary briefings, company mail, contractor handoff, knowledge retention, active-run portal incident filing, and a read-only Discord status adapter. The portal never presents placeholder output as agent work.
 
 ## Control plane and the sole socket holder
 
@@ -60,9 +60,13 @@ Each task retry records a new auditable run but points execution at the prior ru
 
 The host merge watcher closes the delivery loop without giving Docker socket or host-worktree authority to an employee. It polls GitHub for a `VincentL01`-merged pull request matching the clean current `codex/*` branch. Only then may it switch the host checkout to `main`, run `git pull --ff-only origin main`, rebuild the local company, and write an idempotent `repository_syncs` record plus activity item. It refuses unexpected remotes, direct pushes, dirty worktrees, non-fast-forward main branches, and unverified merge identities.
 
+The Worker observes only uncaught first-party exceptions and API 5xx responses. It records an incident only when the request identifies an active run or exactly one active run exists. D1 normalizes and redacts local evidence, deduplicates it by a stable bug fingerprint, and exposes a leased outbox. A recurrence in a newer clean build requeues the same signature; the host watcher reopens the existing issue if necessary instead of multiplying duplicates. The watcher publishes only allowlisted category, route, status, build, run, task, and employee identifiers, reads the issue back from `VincentL01/LaAzienda`, and only then acknowledges the verified link. Diagnostic text, employee output, browser error text, request bodies, prompts, headers, and credentials never enter the public GitHub payload.
+
 Dorothy can read company records, mail, runtime observations, projects, and knowledge, but the API refuses to use her as a mail sender or task owner. Her prompt forbids mutations.
 
 Secretary inquiries are durable jobs assigned only to Dorothy's running container. `company-status` retrieves the same D1 snapshot used by the CEO's employee inspector, so her answer can name the accountable employee, current task/run, heartbeat, and missing or stale evidence.
+
+Aurora is a permanent read-only communications employee created from the normal Codex base image, with no socket and no adapter credentials. `omc-discord-aurora` is a separate non-Codex transport container. It gets only a domain-separated read-only status token, registers user-install `/company` and `/employee` commands through Discord's Gateway, verifies the invoking user against the application owner and authorization owner, and returns bounded mention-safe status text. Startup is considered successful only after command registration, Gateway `ClientReady`, and a container health sentinel. It has no host port, employee workspace, Docker socket, Codex credential, or GitHub credential.
 
 ## Separate state contracts
 

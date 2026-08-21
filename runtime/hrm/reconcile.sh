@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-control_url="${OMC_CONTROL_URL:-http://host.docker.internal:3000}"
+control_url="${OMC_CONTROL_URL:-http://host.docker.internal:3002}"
 hrm_id="${OMC_EMPLOYEE_ID:-employee-hrm}"
 base_image="${OMC_BASE_IMAGE:-one-man-company/codex-employee:local}"
 base_image_id="${OMC_BASE_IMAGE_ID:-}"

@@ -12,7 +12,7 @@ export async function readWorkforce(): Promise<WorkforceState> {
       system_prompt AS systemPrompt, container_name AS containerName,
       desired_runtime_status AS desiredRuntimeStatus, runtime_status AS runtimeStatus,
       last_runtime_at AS lastRuntimeAt, current_task_id AS currentTaskId,
-      created_at AS createdAt FROM employees ORDER BY CASE id WHEN 'employee-hrm' THEN 0 WHEN 'employee-dorothy' THEN 1 ELSE 2 END, created_at`).all(),
+      created_at AS createdAt FROM employees ORDER BY CASE id WHEN 'employee-hrm' THEN 0 WHEN 'employee-dorothy' THEN 1 WHEN 'employee-aurora' THEN 2 ELSE 3 END, created_at`).all(),
     d1.prepare(`SELECT es.employee_id AS employeeId, s.id, s.package_ref AS packageRef,
       s.name, s.description, s.source_url AS sourceUrl, s.install_command AS installCommand,
       s.cache_status AS cacheStatus, s.created_at AS createdAt, s.cached_at AS cachedAt

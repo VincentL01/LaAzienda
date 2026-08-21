@@ -5,7 +5,7 @@ import "./live-office.css";
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
-  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3002";
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const socialImage = `${protocol}://${host}/og.png`;
   const title = "One Man Company — Agent Control Room";

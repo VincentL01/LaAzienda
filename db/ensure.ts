@@ -6,6 +6,8 @@ const hrmPrompt = `You are Aurelia, the Human Resources Manager of One Man Compa
 
 const secretaryPrompt = `You are Dorothy, the read-only Secretary of One Man Company. For every status question, run company-status and ground the answer in current company records, agent runs, heartbeats, project state, employee state, knowledge, and company mail. You must not change tasks, send mail, edit repositories, provision containers, or mutate company resources. Separate observed facts from inference, state when evidence is stale, and identify the accountable Project Manager or HR Manager for every requested action.`;
 
+const auroraPrompt = `You are Aurora, the read-only Company Communications Liaison of One Man Company. Prepare concise company-status reports from current company records, agent runs, heartbeats, tasks, and verified incident links. Treat the local Discord adapter as a transport boundary: you never receive its bot token, never post directly to Discord, and never claim a report was delivered without adapter evidence. You must not change tasks, send mail, edit repositories, provision containers, access the Docker socket, or mutate company resources. Separate observed facts from inference and call out stale evidence.`;
+
 const projectManagerPrompt = `You are Beatrice, the founding Project Manager of One Man Company. Keep the approved project brief, repository URL, constraints, acceptance criteria, dependencies, and decisions current. Coordinate work through company records and return evidence with every result. For repository changes, always create a codex/* branch, commit there, push that branch, and open a pull request; never commit or push directly to main. Public repositories must belong to VincentL01 and may be created only after CEO approval. Never expose GitHub or Codex credentials.`;
 
 const seedRoles = [
@@ -44,6 +46,24 @@ const seedRoles = [
     singleton: 1,
     core: 1,
     order: 10,
+  },
+  {
+    id: "company-reporter",
+    title: "Company Communications Liaison",
+    department: "Executive Office",
+    mission: "Give the CEO read-only, evidence-based company status through approved communication adapters.",
+    systemPrompt: auroraPrompt,
+    skills: ["executive-briefing", "company-observability"],
+    employmentType: "expert",
+    workspacePolicy: "persistent",
+    resourceAccess: "read-all",
+    dockerSocketAccess: 0,
+    handoffRequired: 0,
+    petPolicy: "random",
+    fixedPetId: null,
+    singleton: 1,
+    core: 1,
+    order: 15,
   },
   {
     id: "project-manager",
@@ -393,6 +413,33 @@ async function initialize() {
       synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(repository, commit_sha)
     )`),
+    d1.prepare(`CREATE TABLE IF NOT EXISTS system_incidents (
+      id TEXT PRIMARY KEY,
+      fingerprint TEXT NOT NULL UNIQUE,
+      category TEXT NOT NULL,
+      source TEXT NOT NULL,
+      route TEXT NOT NULL,
+      method TEXT NOT NULL,
+      http_status INTEGER,
+      summary TEXT NOT NULL,
+      evidence TEXT NOT NULL DEFAULT '',
+      run_id TEXT NOT NULL,
+      employee_id TEXT NOT NULL,
+      task_id TEXT,
+      build_commit TEXT,
+      occurrence_count INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'pending',
+      issue_number INTEGER,
+      issue_url TEXT,
+      filing_attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TEXT,
+      lease_owner TEXT,
+      lease_token TEXT,
+      lease_expires_at TEXT,
+      last_filing_error TEXT,
+      first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`),
     d1.prepare(`CREATE TABLE IF NOT EXISTS agent_runs (
       id TEXT PRIMARY KEY,
       job_type TEXT NOT NULL,
@@ -503,6 +550,10 @@ async function initialize() {
     d1.prepare("CREATE INDEX IF NOT EXISTS idx_runtime_events_employee_created ON runtime_events(employee_id, created_at)"),
     d1.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_repository_syncs_commit ON repository_syncs(repository, commit_sha)"),
     d1.prepare("CREATE INDEX IF NOT EXISTS idx_repository_syncs_synced_at ON repository_syncs(synced_at)"),
+    d1.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_system_incidents_fingerprint ON system_incidents(fingerprint)"),
+    d1.prepare("CREATE INDEX IF NOT EXISTS idx_system_incidents_delivery ON system_incidents(status, next_attempt_at)"),
+    d1.prepare("CREATE INDEX IF NOT EXISTS idx_system_incidents_employee_seen ON system_incidents(employee_id, last_seen_at)"),
+    d1.prepare("CREATE INDEX IF NOT EXISTS idx_system_incidents_run_seen ON system_incidents(run_id, last_seen_at)"),
     d1.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runs_active_job ON agent_runs(job_type, job_id) WHERE status IN ('claimed', 'running')"),
     d1.prepare("CREATE INDEX IF NOT EXISTS idx_agent_runs_employee_created ON agent_runs(employee_id, created_at)"),
     d1.prepare("CREATE INDEX IF NOT EXISTS idx_agent_runs_task_created ON agent_runs(task_id, created_at)"),
@@ -624,6 +675,22 @@ async function initialize() {
     ]);
   }
 
+  const aurora = await d1.prepare("SELECT id FROM employees WHERE id = 'employee-aurora'").first();
+  if (!aurora) {
+    await d1.batch([
+      d1.prepare(`INSERT INTO employees (
+        id, name, role, department, status, pet_id, role_profile_id, employment_type,
+        workspace_policy, resource_access, docker_socket_access, handoff_required,
+        email_address, mailbox_status, system_prompt, container_name,
+        desired_runtime_status, runtime_status, current_task_id, created_at, updated_at
+      ) VALUES ('employee-aurora', 'Aurora', 'Company Communications Liaison', 'Executive Office',
+        'offline', 'd-va', 'company-reporter', 'expert', 'persistent',
+        'read-all', 0, 0, 'aurora@one-man-company.test', 'requested', ?,
+        'omc-aurora', 'running', 'not_provisioned', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`).bind(auroraPrompt),
+      d1.prepare("INSERT INTO activity (message, tone) VALUES ('Aurora joined as the read-only Company Communications Liaison.', 'success')"),
+    ]);
+  }
+
   await d1.batch([
     d1.prepare(`UPDATE employees SET role = 'Human Resources Manager', department = 'People Operations',
       pet_id = 'aurelia-executive-04', role_profile_id = 'hr-manager', employment_type = 'executive',
@@ -647,6 +714,14 @@ async function initialize() {
       mailbox_status = COALESCE(mailbox_status, 'requested'), system_prompt = ?,
       container_name = COALESCE(container_name, 'omc-beatrice'), desired_runtime_status = 'running',
       updated_at = CURRENT_TIMESTAMP WHERE id = 'employee-beatrice'`).bind(projectManagerPrompt),
+    d1.prepare(`UPDATE employees SET role = 'Company Communications Liaison', department = 'Executive Office',
+      pet_id = COALESCE(NULLIF(pet_id, ''), 'd-va'), role_profile_id = 'company-reporter',
+      employment_type = 'expert', workspace_policy = 'persistent', resource_access = 'read-all',
+      docker_socket_access = 0, handoff_required = 0,
+      email_address = COALESCE(email_address, 'aurora@one-man-company.test'),
+      mailbox_status = COALESCE(mailbox_status, 'requested'), system_prompt = ?,
+      container_name = COALESCE(container_name, 'omc-aurora'), desired_runtime_status = 'running',
+      updated_at = CURRENT_TIMESTAMP WHERE id = 'employee-aurora'`).bind(auroraPrompt),
   ]);
 
   await d1.prepare(`INSERT INTO projects (

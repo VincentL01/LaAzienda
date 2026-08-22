@@ -8,6 +8,7 @@ base_image="${OMC_BASE_IMAGE:-one-man-company/codex-employee:local}"
 base_image_id="${OMC_BASE_IMAGE_ID:-}"
 github_auth_version="${OMC_GITHUB_AUTH_VERSION:-missing}"
 company_network="${OMC_DOCKER_NETWORK:-one-man-company}"
+auth_source_container="${OMC_AUTH_SOURCE_CONTAINER:-omc-auth-source}"
 training_root="${OMC_TRAINING_ROOT:-/company/training-cache}"
 state_root="${OMC_STATE_ROOT:-/company/state}"
 reconcile_state_root="${OMC_RECONCILE_STATE_ROOT:-/workspace/.company/reconcile}"
@@ -25,6 +26,7 @@ integrity_audit_seconds="${OMC_INTEGRITY_AUDIT_SECONDS:-120}"
 [[ -S /var/run/docker.sock ]] || { echo "HRM cannot reconcile employees because the Docker socket is unavailable." >&2; exit 78; }
 [[ "$integrity_audit_seconds" =~ ^[0-9]+$ ]] || exit 64
 [[ "$base_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "HRM requires an immutable employee base image id." >&2; exit 78; }
+[[ "$auth_source_container" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$ ]] || { echo "Unsafe authentication source container identity." >&2; exit 65; }
 
 bridge_header=()
 if [[ -n "${OMC_RUNTIME_BRIDGE_TOKEN:-}" ]]; then bridge_header=(-H "x-runtime-bridge-token: ${OMC_RUNTIME_BRIDGE_TOKEN}"); fi
@@ -42,6 +44,16 @@ valid_folder() {
   case "${1%%.*}" in [Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9]) return 1 ;; esac
 }
 valid_digest() { [[ "$1" =~ ^[0-9a-f]{64}$ ]]; }
+
+training_generation() {
+  jq -ers '
+    if length == 1 and
+      (.[0].desiredGeneration | type == "number" and floor == . and . >= 1)
+    then .[0].desiredGeneration
+    else error("invalid training generation envelope")
+    end
+  ' <<< "$1"
+}
 
 publish_claim_generation() {
   local generation="$1" stage
@@ -91,10 +103,24 @@ hash_tree() {
 }
 
 write_volume_file() {
-  local volume="$1" target="$2" mode="$3"
-  docker run --rm -i --user 0 --entrypoint bash --volume "$volume:/target" "$base_image_id" \
+  local volume="$1" target="$2" mode="$3" expected_hash="${4:-}" expected_size="${5:-}"
+  local input_file actual_hash actual_size result
+  input_file="$(mktemp)" || return 74
+  if ! cat > "$input_file"; then rm -f -- "$input_file"; return 74; fi
+  actual_hash="$(sha256sum -- "$input_file")" || { rm -f -- "$input_file"; return 74; }
+  actual_hash="${actual_hash%% *}"
+  actual_size="$(stat -c %s -- "$input_file")" || { rm -f -- "$input_file"; return 74; }
+  if [[ -z "$expected_hash" ]]; then expected_hash="$actual_hash"; fi
+  if [[ -z "$expected_size" ]]; then expected_size="$actual_size"; fi
+  if ! valid_digest "$expected_hash" || ! [[ "$expected_size" =~ ^[1-9][0-9]*$ ]] \
+    || [[ "$actual_hash" != "$expected_hash" || "$actual_size" != "$expected_size" ]]; then
+    rm -f -- "$input_file"
+    return 65
+  fi
+  if docker run --rm -i --user 0 --entrypoint bash --volume "$volume:/target" "$base_image_id" \
     -c 'set -Eeuo pipefail
-      relative="$1"; mode="$2"; root=/target
+      relative="$1"; mode="$2"; expected_hash="$3"; expected_size="$4"; root=/target
+      [[ "$expected_hash" =~ ^[0-9a-f]{64}$ && "$expected_size" =~ ^[1-9][0-9]*$ ]] || exit 65
       [[ "$relative" != /* && "$relative" != *//* && "$relative" != *"/../"* && "$relative" != ../* && "$relative" != */.. ]] || exit 65
       [[ -d "$root" && ! -L "$root" ]] || exit 65
       parent="$root"; IFS="/" read -r -a parts <<< "$relative"; ((${#parts[@]} > 0)) || exit 65
@@ -103,13 +129,30 @@ write_volume_file() {
         parent="$parent/$component"; [[ ! -L "$parent" ]] || exit 65
         if [[ ! -e "$parent" ]]; then mkdir -- "$parent"; sync -f "$(dirname "$parent")"; fi
         [[ -d "$parent" && ! -L "$parent" ]] || exit 65
+        # Root helpers create control ancestors, but employee helpers run as
+        # UID 1001. Normalize every validated real parent so a retained
+        # root-owned `.company` directory cannot block training-state creation.
+        chmod 0755 "$parent"; chown 1001:1001 "$parent"
       done
       base="${parts[${#parts[@]}-1]}"; [[ -n "$base" && "$base" != . && "$base" != .. ]] || exit 65
       destination="$parent/$base"; [[ ! -L "$destination" && ( ! -e "$destination" || -f "$destination" ) ]] || exit 65
       stage="$(mktemp "$parent/.omc-publish-$base-XXXXXXXX")"
       trap '\''rm -f -- "$stage"'\'' EXIT HUP INT TERM
-      cat > "$stage"; chmod "$mode" "$stage"; chown 1001:1001 "$stage"; sync -f "$stage"
-      mv -T -- "$stage" "$destination"; sync -f "$parent"; trap - EXIT HUP INT TERM' _ "$target" "$mode"
+      cat > "$stage" || exit 71
+      # EOF is not a valid company control document. The former writer treated
+      # an interrupted/empty stdin as success and could atomically publish a
+      # zero-byte authority file. Reject it before the destination rename.
+      actual_size="$(stat -c %s -- "$stage")"
+      actual_hash="$(sha256sum -- "$stage")"; actual_hash="${actual_hash%% *}"
+      [[ "$actual_size" == "$expected_size" && "$actual_hash" == "$expected_hash" ]] || exit 72
+      chmod "$mode" "$stage"; chown 1001:1001 "$stage"; sync -f "$stage"
+      mv -T -- "$stage" "$destination"; sync -f "$parent"; trap - EXIT HUP INT TERM' _ "$target" "$mode" "$expected_hash" "$expected_size" < "$input_file"; then
+    result=0
+  else
+    result=$?
+  fi
+  rm -f -- "$input_file" || return 74
+  return "$result"
 }
 read_volume_file() {
   docker run --rm --entrypoint sh --volume "$1:/source:ro" "$base_image_id" -c "cat '/source/$2'"
@@ -124,10 +167,30 @@ volume_file_exists() {
 volume_control_paths_safe() {
   docker run --rm --user 1001:1001 --entrypoint bash --volume "$1:/workspace:ro" "$base_image_id" -c '
     set -Eeuo pipefail
+    control_dir_ready() {
+      local path="$1" uid mode owner_mode
+      [[ -d "$path" && ! -L "$path" ]] || return 1
+      uid="$(stat -c %u -- "$path")"; mode="$(stat -c %a -- "$path")"
+      [[ "$uid" == 1001 && "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+      owner_mode="${mode: -3:1}"
+      [[ "$owner_mode" == 3 || "$owner_mode" == 7 ]]
+    }
     [[ ! -L /workspace/.company ]]
-    [[ ! -e /workspace/.company || -d /workspace/.company ]]
+    [[ ! -e /workspace/.company ]] || control_dir_ready /workspace/.company
     for path in /workspace/.company/training /workspace/.company/runs; do
-      [[ ! -L "$path" && ( ! -e "$path" || -d "$path" ) ]]
+      [[ ! -L "$path" ]]
+      [[ ! -e "$path" ]] || control_dir_ready "$path"
+    done'
+}
+normalize_volume_control_paths() {
+  docker run --rm --user 0 --entrypoint bash --volume "$1:/workspace" "$base_image_id" -c '
+    set -Eeuo pipefail
+    [[ -d /workspace && ! -L /workspace ]]
+    for path in /workspace/.company /workspace/.company/training /workspace/.company/runs; do
+      [[ ! -L "$path" ]]
+      if [[ ! -e "$path" ]]; then mkdir -- "$path"; sync -f "$(dirname "$path")"; fi
+      [[ -d "$path" && ! -L "$path" ]]
+      chmod 0755 "$path"; chown 1001:1001 "$path"; sync -f "$path"
     done'
 }
 ensure_volume_owner() {
@@ -179,7 +242,8 @@ cleanup_skill_candidates() {
 
 valid_managed_manifest() {
   local employee="$1" candidate="$2"
-  jq -e --arg employee "$employee" '
+  jq -es --arg employee "$employee" '
+    length == 1 and (.[0] |
     .schemaVersion == 2 and .employeeId == $employee and
     (.manifestVersion | type == "string" and test("^[0-9a-f]{64}$")) and
     (.skills | type == "array") and
@@ -204,7 +268,35 @@ valid_managed_manifest() {
       (.assignmentVersion | type == "number" and floor == . and . >= 1))) and
     ([.removals[].id] | length == (unique | length)) and
     ([.removals[].folder] | length == (unique | length)) and
-    ([.skills[].folder, .removals[].folder] | flatten | length == (unique | length))
+    ([.skills[].folder, .removals[].folder] | flatten | length == (unique | length)))
+  ' <<< "$candidate" >/dev/null 2>&1
+}
+
+publish_manifest_file() {
+  local volume="$1" target="$2" employee="$3" content="$4" readback expected_hash expected_size
+  valid_managed_manifest "$employee" "$content" || return 65
+  expected_hash="$(printf '%s' "$content" | sha256sum)" || return 74
+  expected_hash="${expected_hash%% *}"
+  expected_size="$(printf '%s' "$content" | wc -c)" || return 74
+  valid_digest "$expected_hash" && [[ "$expected_size" =~ ^[1-9][0-9]*$ ]] || return 65
+  if printf '%s' "$content" | write_volume_file "$volume" "$target" 0644 "$expected_hash" "$expected_size"; then :; else return $?; fi
+  readback="$(read_volume_file "$volume" "$target" 2>/dev/null)" || return 74
+  [[ -n "$readback" && "$readback" == "$content" ]] || return 74
+  valid_managed_manifest "$employee" "$readback" || return 74
+}
+
+valid_applied_evidence() {
+  local employee="$1" version="$2" expected_skills="$3" candidate="$4"
+  jq -es --arg employee "$employee" --arg version "$version" --argjson expectedSkills "$expected_skills" '
+    length == 1 and (.[0] |
+      type == "object" and
+      .schemaVersion == 2 and .employeeId == $employee and .manifestVersion == $version and
+      (.appliedAt | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
+      (.skills | type == "array") and
+      ([.skills[] | {id,packageRef,folder,assignmentVersion,sourceHash,observedDigest,approvalVersion}] | sort_by(.id)) == ($expectedSkills | sort_by(.id)) and
+      all(.skills[];
+        (.verifiedHash | type == "string" and test("^[0-9a-f]{64}$")) and
+        .verifiedHash == .sourceHash))
   ' <<< "$candidate" >/dev/null 2>&1
 }
 
@@ -305,10 +397,10 @@ rm -f -- "$catalog_file"
 # monotonic generation; otherwise a mutation between the two endpoints could
 # be published even though the employee desiredSkills snapshot was stale.
 training_state="$(api_get "$control_url/api/training")"
-reconciled_training_generation="$(jq -er '.desiredGeneration | select(type == "number" and floor == . and . >= 1)' <<< "$training_state")"
+reconciled_training_generation="$(training_generation "$training_state")"
 workforce="$(api_get "$control_url/api/employees")"
 confirmed_training_state="$(api_get "$control_url/api/training")"
-confirmed_training_generation="$(jq -er '.desiredGeneration | select(type == "number" and floor == . and . >= 1)' <<< "$confirmed_training_state")"
+confirmed_training_generation="$(training_generation "$confirmed_training_state")"
 if [[ "$confirmed_training_generation" != "$reconciled_training_generation" ]]; then
   echo "Training desired state changed while sensing the workforce; refusing a mixed snapshot." >&2
   exit 75
@@ -447,7 +539,7 @@ while IFS= read -r employee; do
   expected_policy_hash="$(sha256sum "$policy_file" | awk '{print $1}')"
   if [[ "$current_container_state" == running ]]; then
     actual_policy_hash="$(docker exec "$container_name" bash -c '[[ -f /workspace/AGENTS.md && ! -L /workspace/AGENTS.md ]] && sha256sum -- /workspace/AGENTS.md' 2>/dev/null || true)"
-    if docker exec "$container_name" bash -c '[[ ! -L /workspace/.company && ( ! -e /workspace/.company || -d /workspace/.company ) ]]; for path in /workspace/.company/training /workspace/.company/runs; do [[ ! -L "$path" && ( ! -e "$path" || -d "$path" ) ]] || exit 1; done' >/dev/null 2>&1; then company_paths_safe=true; else company_paths_safe=false; fi
+    if docker exec "$container_name" bash -c '[[ ! -L /workspace/.company && ( ! -e /workspace/.company || ( -d /workspace/.company && -O /workspace/.company && -w /workspace/.company && -x /workspace/.company ) ) ]]; for path in /workspace/.company/training /workspace/.company/runs; do [[ ! -L "$path" && ( ! -e "$path" || ( -d "$path" && -O "$path" && -w "$path" && -x "$path" ) ) ]] || exit 1; done' >/dev/null 2>&1; then company_paths_safe=true; else company_paths_safe=false; fi
   else
     actual_policy_hash="$(hash_volume_file "$workspace_volume" AGENTS.md 2>/dev/null || true)"
     if volume_control_paths_safe "$workspace_volume"; then company_paths_safe=true; else company_paths_safe=false; fi
@@ -462,10 +554,13 @@ while IFS= read -r employee; do
       current_container_state=exited
     fi
     if [[ "$policy_ready" == true ]]; then
-      write_volume_file "$workspace_volume" AGENTS.md 0644 < "$policy_file" || policy_ready=false
-      printf '%s\n' "$policy_version" | write_volume_file "$workspace_volume" .company/policy-version 0644 || policy_ready=false
+      normalize_volume_control_paths "$workspace_volume" || policy_ready=false
+      if [[ "$policy_ready" == true ]]; then
+        write_volume_file "$workspace_volume" AGENTS.md 0644 < "$policy_file" || policy_ready=false
+        printf '%s\n' "$policy_version" | write_volume_file "$workspace_volume" .company/policy-version 0644 || policy_ready=false
+      fi
       repaired_policy_hash="$(hash_volume_file "$workspace_volume" AGENTS.md 2>/dev/null || true)"; repaired_policy_hash="${repaired_policy_hash%% *}"
-      [[ "$repaired_policy_hash" == "$expected_policy_hash" ]] || policy_ready=false
+      [[ "$repaired_policy_hash" == "$expected_policy_hash" ]] && volume_control_paths_safe "$workspace_volume" || policy_ready=false
     fi
   fi
   if [[ "$policy_ready" != true ]]; then
@@ -485,6 +580,7 @@ while IFS= read -r employee; do
     recovery_failure=""
     if ! recover_employee_skill_sync "$employee_id" "$workspace_volume" "$skills_volume" "$installed_skills_volume"; then
       recovery_failure="A trusted interrupted training transaction could not be recovered; the employee remains stopped."
+      echo "Training transaction recovery failed for $employee_id." >&2
       reconcile_succeeded=false
     fi
     validation_failures="$(mktemp)"
@@ -552,32 +648,47 @@ while IFS= read -r employee; do
         manifest_matches_installed_volume "$employee_id" "$managed_candidate" "$workspace_volume" "$installed_skills_volume" && managed_valid=true
         manifest_matches_installed_volume "$employee_id" "$last_good_candidate" "$workspace_volume" "$installed_skills_volume" && last_good_valid=true
         manifest_matches_installed_volume "$employee_id" "$staged_candidate" "$workspace_volume" "$installed_skills_volume" && staged_valid=true
+        empty_manifest="$(jq -nc --arg employeeId "$employee_id" --arg manifestVersion "$(printf '' | sha256sum | awk '{print $1}')" '{schemaVersion:2,employeeId:$employeeId,manifestVersion:$manifestVersion,skills:[],removals:[]}')"
+        empty_installed_proven=false
+        manifest_matches_installed_volume "$employee_id" "$empty_manifest" "$workspace_volume" "$installed_skills_volume" \
+          && empty_installed_proven=true
         manifest_provenance_ok=true
         managed_manifest=""
+        managed_manifest_source="none"
         if [[ "$managed_exists" == true || "$last_good_exists" == true ]] \
           && [[ "$managed_contract_valid" != true && "$last_good_contract_valid" != true ]]; then
-          # Existing but corrupt authoritative copies are never reconstructed
-          # from a merely staged desired manifest.
-          manifest_provenance_ok=false
+          # Corrupt authority is normally terminal. The only safe bootstrap is
+          # an independently enumerated empty installed-skills volume: there is
+          # then no managed folder or deletion provenance to lose.
+          if [[ "$empty_installed_proven" == true ]]; then
+            managed_manifest="$empty_manifest"
+            managed_manifest_source="empty-corrupt-authority-bootstrap"
+          else
+            manifest_provenance_ok=false
+          fi
         elif [[ "$managed_valid" == true && "$last_good_valid" == true ]]; then
           # Both candidates independently prove the same exact folder/hash
           # bytes. Metadata can legitimately differ across a crash during a
           # revoke/reassign of unchanged content; the managed slot wins
           # deterministically and is republished to both authority copies.
           managed_manifest="$managed_candidate"
+          managed_manifest_source="managed"
         elif [[ "$managed_valid" == true ]]; then
           managed_manifest="$managed_candidate"
+          managed_manifest_source="managed"
         elif [[ "$last_good_valid" == true ]]; then
           managed_manifest="$last_good_candidate"
+          managed_manifest_source="last-good"
         elif [[ "$staged_valid" == true ]]; then
           # This is the durable crash window after installed-volume commit but
           # before either authority copy was published. Exact folder+hash
           # read-back upgrades only the already staged HRM-owned manifest.
           managed_manifest="$staged_candidate"
+          managed_manifest_source="staged"
         else
-          empty_manifest="$(jq -nc --arg employeeId "$employee_id" --arg manifestVersion "$(printf '' | sha256sum | awk '{print $1}')" '{schemaVersion:2,employeeId:$employeeId,manifestVersion:$manifestVersion,skills:[],removals:[]}')"
-          if manifest_matches_installed_volume "$employee_id" "$empty_manifest" "$workspace_volume" "$installed_skills_volume"; then
+          if [[ "$empty_installed_proven" == true ]]; then
             managed_manifest="$empty_manifest"
+            managed_manifest_source="empty-new-volume-bootstrap"
           else
             manifest_provenance_ok=false
           fi
@@ -594,17 +705,36 @@ while IFS= read -r employee; do
           # Repair authority before any new mutation. Each file publication is
           # atomic and managed is written first, so every crash window retains
           # at least one exact installed-volume-matching provenance record.
-          if ! printf '%s' "$managed_manifest" | write_volume_file "$skills_volume" "$managed_manifest_name" 0644 \
-            || ! printf '%s' "$managed_manifest" | write_volume_file "$skills_volume" "$last_good_manifest_name" 0644; then
+          authority_publication_target="$managed_manifest_name"
+          if publish_manifest_file "$skills_volume" "$managed_manifest_name" "$employee_id" "$managed_manifest"; then
+            authority_publication_target="$last_good_manifest_name"
+            if publish_manifest_file "$skills_volume" "$last_good_manifest_name" "$employee_id" "$managed_manifest"; then
+              authority_publication_status=0
+            else
+              authority_publication_status=$?
+            fi
+          else
+            authority_publication_status=$?
+          fi
+          if [[ "$authority_publication_status" != 0 ]]; then
+            authority_contract_valid=false
+            valid_managed_manifest "$employee_id" "$managed_manifest" && authority_contract_valid=true
+            authority_hash="$(printf '%s' "$managed_manifest" | sha256sum)"; authority_hash="${authority_hash%% *}"
+            authority_size="$(printf '%s' "$managed_manifest" | wc -c)"
+            empty_authority_hash="$(printf '%s' "$empty_manifest" | sha256sum)"; empty_authority_hash="${empty_authority_hash%% *}"
+            empty_authority_size="$(printf '%s' "$empty_manifest" | wc -c)"
+            echo "Training authority repair publication failed for $employee_id at $authority_publication_target (status $authority_publication_status, source $managed_manifest_source, contract $authority_contract_valid, bytes $authority_size/$empty_authority_size, hashes $authority_hash/$empty_authority_hash)." >&2
             reconcile_succeeded=false
           fi
         fi
         if [[ "$reconcile_succeeded" == true && "$manifest_provenance_ok" == true ]]; then
-          printf '%s' "$managed_manifest" | write_volume_file "$skills_volume" "$prior_manifest_name" 0644
-          printf '%s' "$manifest" | write_volume_file "$skills_volume" "$skill_manifest_name" 0644
-
-          if ! applied_json="$(run_employee_skill_sync "$employee_id" "$container_name" "$container_running" "$workspace_volume" "$skills_volume" "$installed_skills_volume" 2>/dev/null)" \
-          || ! jq -e --arg employee "$employee_id" --arg version "$manifest_version" '.schemaVersion == 2 and .employeeId == $employee and .manifestVersion == $version' <<< "$applied_json" >/dev/null 2>&1; then
+          if ! publish_manifest_file "$skills_volume" "$prior_manifest_name" "$employee_id" "$managed_manifest" \
+            || ! publish_manifest_file "$skills_volume" "$skill_manifest_name" "$employee_id" "$manifest"; then
+            echo "Training mutation manifest publication failed for $employee_id." >&2
+            reconcile_succeeded=false
+          elif ! applied_json="$(run_employee_skill_sync "$employee_id" "$container_name" "$container_running" "$workspace_volume" "$skills_volume" "$installed_skills_volume" 2>/dev/null)" \
+          || ! valid_applied_evidence "$employee_id" "$manifest_version" "$skills_contract" "$applied_json"; then
+          echo "Training application or evidence validation failed for $employee_id." >&2
           reconcile_succeeded=false
           while IFS= read -r desired_skill; do
             report_training "$employee_id" "$(jq -r '.id' <<< "$desired_skill")" install "$(jq -r '.assignmentVersion' <<< "$desired_skill")" failed "$manifest_version" "$(jq -r '.sourceHash' <<< "$desired_skill")" "" "" "The fail-atomic container sync did not produce its expected evidence manifest; the prior managed manifest remains authoritative." || true
@@ -631,8 +761,8 @@ while IFS= read -r employee; do
           if [[ -s "$readback_failures" ]]; then reconcile_succeeded=false; else
             # Proven workspace state becomes the only deletion provenance for a
             # later pass. Employee-owned applied.json is evidence only.
-            if printf '%s' "$manifest" | write_volume_file "$skills_volume" "$managed_manifest_name" 0644 \
-              && printf '%s' "$manifest" | write_volume_file "$skills_volume" "$last_good_manifest_name" 0644; then
+            if publish_manifest_file "$skills_volume" "$managed_manifest_name" "$employee_id" "$manifest" \
+              && publish_manifest_file "$skills_volume" "$last_good_manifest_name" "$employee_id" "$manifest"; then
               cleanup_skill_candidates "$skills_volume" "$manifest_version" || true
             else
               reconcile_succeeded=false
@@ -699,7 +829,7 @@ while IFS= read -r employee; do
       --env "OMC_MAIL_IMAP_HOST=stalwart" --env "OMC_MAIL_IMAP_PORT=993" \
       --volume "$workspace_volume:/workspace" --volume "$installed_skills_volume:/workspace/.agents/skills:ro" \
       --volume "$skills_volume:/opt/assigned-skills:ro" \
-      --volume "$secrets_volume:/run/company-secrets:ro" --volumes-from omc-auth-source:ro
+      --volume "$secrets_volume:/run/company-secrets:ro" --volumes-from "$auth_source_container:ro"
     if [[ "$role_profile" == project-manager ]] && docker container inspect omc-github-source >/dev/null 2>&1; then set -- "$@" --volumes-from omc-github-source:ro; fi
     set -- "$@" "$base_image_id"; "$@" >/dev/null; docker start "$container_name" >/dev/null; exists=true
     case "$refresh_reason" in
@@ -747,7 +877,7 @@ fi
 # still compares this opaque value inside the claim INSERT, so a CEO/cache
 # mutation in the final read-to-claim window makes the claim a safe no-op.
 final_training_state="$(api_get "$control_url/api/training")"
-claim_training_generation="$(jq -er '.desiredGeneration | select(type == "number" and floor == . and . >= 1)' <<< "$final_training_state")"
+claim_training_generation="$(training_generation "$final_training_state")"
 if [[ "$claim_training_generation" != "$reconciled_training_generation" ]]; then
   echo "Training desired state changed during reconciliation; refusing to publish a stale claim generation." >&2
   exit 75

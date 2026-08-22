@@ -1,4 +1,5 @@
-FROM one-man-company/codex-employee:local
+ARG BASE_IMAGE=one-man-company/codex-employee:local
+FROM ${BASE_IMAGE}
 
 USER root
 COPY --from=docker:28-cli /usr/local/bin/docker /usr/local/bin/docker

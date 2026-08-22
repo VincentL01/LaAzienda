@@ -72,8 +72,58 @@ if ($hrmImageIdentity -notmatch '^sha256:[0-9a-f]{64}$') { throw "The HR Manager
 New-Item -ItemType Directory -Force -Path $stateRoot, $skillCacheRoot | Out-Null
 $hrmStateRoot = [IO.Path]::GetFullPath((Join-Path $stateRoot $hrm.id))
 $hrmWorkspace = [IO.Path]::GetFullPath((Join-Path $hrmStateRoot "workspace"))
-if (-not $hrmWorkspace.StartsWith($stateRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe HR Manager workspace path." }
-New-Item -ItemType Directory -Force -Path $hrmWorkspace | Out-Null
+
+function Test-ContainedRuntimePath([string]$Root, [string]$Candidate) {
+  $resolvedRoot = [IO.Path]::GetFullPath($Root).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+  $resolvedCandidate = [IO.Path]::GetFullPath($Candidate)
+  $prefix = "$resolvedRoot$([IO.Path]::DirectorySeparatorChar)"
+  return $resolvedCandidate.Equals($resolvedRoot, [StringComparison]::OrdinalIgnoreCase) -or
+    $resolvedCandidate.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Assert-SafeRuntimeDirectory([string]$Root, [string]$RelativePath) {
+  $resolvedRoot = [IO.Path]::GetFullPath($Root)
+  if (-not (Test-Path -LiteralPath $resolvedRoot -PathType Container)) {
+    throw "The HR Manager runtime root is not a directory."
+  }
+  $rootItem = Get-Item -LiteralPath $resolvedRoot -Force
+  if (($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+    throw "The HR Manager runtime root cannot be a reparse point."
+  }
+
+  $current = $resolvedRoot
+  foreach ($component in @($RelativePath -split '[\\/]' | Where-Object { $_ })) {
+    if ($component -eq "." -or $component -eq "..") { throw "Unsafe HR Manager runtime directory component." }
+    $current = [IO.Path]::GetFullPath((Join-Path $current $component))
+    if (-not (Test-ContainedRuntimePath $resolvedRoot $current)) { throw "HR Manager runtime directory left its bind root." }
+    if (Test-Path -LiteralPath $current) {
+      $item = Get-Item -LiteralPath $current -Force
+      if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "HR Manager runtime control path is not a real directory: $RelativePath"
+      }
+    } else {
+      New-Item -ItemType Directory -Path $current | Out-Null
+      $item = Get-Item -LiteralPath $current -Force
+      if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "HR Manager runtime control directory could not be created safely: $RelativePath"
+      }
+    }
+  }
+  return $current
+}
+
+if (-not (Test-ContainedRuntimePath $stateRoot $hrmWorkspace)) { throw "Unsafe HR Manager workspace path." }
+Assert-SafeRuntimeDirectory $stateRoot $hrm.id | Out-Null
+Assert-SafeRuntimeDirectory $stateRoot (Join-Path $hrm.id "workspace") | Out-Null
+foreach ($controlDirectory in @(
+  ".company\training",
+  ".company\runs",
+  ".company\reconcile",
+  ".company\dispatcher",
+  ".company\dispatcher\terminal-outbox"
+)) {
+  Assert-SafeRuntimeDirectory $hrmWorkspace $controlDirectory | Out-Null
+}
 $hrmInstructions = "# $($hrm.name) - $($hrm.role)`n`nDepartment: $($hrm.department)`nEmployment type: executive`n`n$($hrm.systemPrompt)`n"
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [IO.File]::WriteAllText((Join-Path $hrmWorkspace "AGENTS.md"), $hrmInstructions, $utf8NoBom)

@@ -45,7 +45,8 @@ atomic_write_json() {
 }
 
 validate_result_json() {
-  printf '%s' "$1" | jq -e '
+  printf '%s' "$1" | jq -es '
+    length == 1 and (.[0] |
     type == "object" and
     (keys | sort) == (["status","summary","current_state","deliverables","decisions","follow_up","knowledge"] | sort) and
     (.status == "completed" or .status == "needs_input") and
@@ -54,17 +55,18 @@ validate_result_json() {
     (.deliverables | type == "array" and all(.[]; type == "string")) and
     (.decisions | type == "array" and all(.[]; type == "string")) and
     (.follow_up | type == "array" and all(.[]; type == "string")) and
-    (.knowledge | type == "string" and (gsub("^\\s+|\\s+$"; "") | length >= 20))
+    (.knowledge | type == "string" and (gsub("^\\s+|\\s+$"; "") | length >= 20)))
   ' >/dev/null 2>&1
 }
 
 validate_terminal_payload() {
   terminal_candidate="$1"
-  if ! printf '%s' "$terminal_candidate" | jq -e --arg worker "$worker_id" '
+  if ! printf '%s' "$terminal_candidate" | jq -es --arg worker "$worker_id" '
+    length == 1 and (.[0] |
     type == "object" and .workerId == $worker and
     (.runId | type == "string" and test("^[A-Za-z0-9_.-]{1,120}$")) and
     ((.action == "complete" and (.result | type == "object")) or
-     (.action == "fail" and (.failureCode | type == "string" and length > 0 and length <= 80)))
+     (.action == "fail" and (.failureCode | type == "string" and length > 0 and length <= 80))))
   ' >/dev/null 2>&1; then return 65; fi
   if terminal_action="$(printf '%s' "$terminal_candidate" | jq -r '.action')"; then :; else return 65; fi
   if [ "$terminal_action" = "complete" ]; then
@@ -183,7 +185,8 @@ recover_interrupted_run() {
   [ -e "$active_marker" ] || return 0
   [ -f "$active_marker" ] && [ ! -L "$active_marker" ] || return 65
   if marker_payload="$(cat "$active_marker")"; then :; else return 65; fi
-  if ! printf '%s' "$marker_payload" | jq -e '
+  if ! printf '%s' "$marker_payload" | jq -es '
+    length == 1 and (.[0] |
     type == "object" and
     (.runId | type == "string" and test("^[A-Za-z0-9_.-]{1,120}$")) and
     (.safeRun | type == "string" and test("^[A-Za-z0-9_.-]{1,120}$")) and
@@ -191,7 +194,7 @@ recover_interrupted_run() {
     (.containerName | type == "string" and test("^[A-Za-z0-9_.-]{1,120}$")) and
     (.containerId | type == "string" and test("^[a-f0-9]{64}$")) and
     ((.phase == "executing" and .executionStatus == null) or
-     (.phase == "post-exec" and (.executionStatus | type == "number" and floor == . and . >= 0 and . <= 255)))
+     (.phase == "post-exec" and (.executionStatus | type == "number" and floor == . and . >= 0 and . <= 255))))
   ' >/dev/null; then return 65; fi
   if recovered_run_id="$(printf '%s' "$marker_payload" | jq -r '.runId')"; then :; else return 65; fi
   if recovered_safe_run="$(printf '%s' "$marker_payload" | jq -r '.safeRun')"; then :; else return 65; fi

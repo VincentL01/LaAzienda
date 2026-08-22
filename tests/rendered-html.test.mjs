@@ -83,7 +83,8 @@ test("keeps runtime, credential, execution, and mail boundaries explicit", async
   assert.match(taskRunner, /--output-schema/);
   assert.match(taskRunner, /workspaceRunId/);
   assert.match(taskRunner, /sandbox_workspace_write\.network_access=true/);
-  assert.match(hrmDockerfile, /FROM one-man-company\/codex-employee:local/);
+  assert.match(hrmDockerfile, /ARG BASE_IMAGE=one-man-company\/codex-employee:local/);
+  assert.match(hrmDockerfile, /FROM \$\{BASE_IMAGE\}/);
   assert.match(hrmDockerfile, /docker:28-cli/);
   assert.match(hrmReconcile, /dockerSocketAccess == true/);
   assert.match(hrmReconcile, /Docker state observed and reported by the HR Manager/);

@@ -64,7 +64,8 @@ candidate_path() {
 validate_ro_manifest() {
   local path="$1" employee="$2" require_hashes="$3"
   [[ -f "$path" && ! -L "$path" ]] || return 1
-  jq -e --arg employee "$employee" --argjson requireHashes "$require_hashes" '
+  jq -es --arg employee "$employee" --argjson requireHashes "$require_hashes" '
+    length == 1 and (.[0] |
     .schemaVersion == 2 and .employeeId == $employee and
     (.manifestVersion | type == "string" and test("^[0-9a-f]{64}$")) and
     (.skills | type == "array") and
@@ -91,7 +92,7 @@ validate_ro_manifest() {
       (.assignmentVersion | type == "number" and floor == . and . >= 1))) and
     ([.removals[].id] | length == (unique | length)) and
     ([.removals[].folder] | length == (unique | length)) and
-    ([.skills[].folder, .removals[].folder] | flatten | length == (unique | length))
+    ([.skills[].folder, .removals[].folder] | flatten | length == (unique | length)))
   ' "$path" >/dev/null
 }
 
@@ -99,6 +100,30 @@ validate_transaction_root() {
   [[ "$transaction_root" == /opt/assigned-skills/* && "$transaction_root" != *//* ]] || return 1
   [[ ! -L /opt/assigned-skills && ! -L "$transaction_root" ]] || return 1
   [[ -d /opt/assigned-skills ]] || return 1
+}
+
+list_workspace_folders() {
+  local list path folder
+  validate_workspace_root "$workspace_skills" || return 65
+  [[ ! -e "$workspace_skills" || ( -d "$workspace_skills" && ! -L "$workspace_skills" ) ]] || return 65
+  [[ -e "$workspace_skills" ]] || return 0
+  [[ -r "$workspace_skills" && -x "$workspace_skills" ]] || return 65
+  list="$(mktemp)" || return 74
+  if ! find "$workspace_skills" -mindepth 1 -maxdepth 1 -print0 > "$list"; then
+    rm -f -- "$list"
+    return 65
+  fi
+  if ! LC_ALL=C sort -z "$list" -o "$list"; then
+    rm -f -- "$list"
+    return 74
+  fi
+  while IFS= read -r -d '' path; do
+    [[ -d "$path" && ! -L "$path" ]] || { rm -f -- "$list"; return 65; }
+    folder="${path##*/}"
+    valid_folder "$folder" || { rm -f -- "$list"; return 65; }
+    printf '%s\n' "$folder" || { rm -f -- "$list"; return 74; }
+  done < "$list"
+  rm -f -- "$list" || return 74
 }
 
 transaction_authorizes_folder() {
@@ -175,19 +200,16 @@ if [[ "${1:-}" == "--hash-workspace" ]]; then
 fi
 if [[ "${1:-}" == "--verify-workspace-absent" ]]; then
   folder="${2:-}"; valid_folder "$folder" || exit 64
-  validate_workspace_root "$workspace_skills" || exit 65
-  [[ ! -e "$workspace_skills/$folder" && ! -L "$workspace_skills/$folder" ]]; exit $?
+  active_folders="$(list_workspace_folders)" || exit $?
+  while IFS= read -r active_folder; do
+    [[ -n "$active_folder" ]] || continue
+    [[ "$active_folder" != "$folder" ]] || exit 1
+  done <<< "$active_folders"
+  exit 0
 fi
 if [[ "${1:-}" == "--list-workspace-folders" ]]; then
-  validate_workspace_root "$workspace_skills" || exit 65
-  [[ ! -e "$workspace_skills" || -d "$workspace_skills" ]] || exit 65
-  if [[ -d "$workspace_skills" ]]; then
-    while IFS= read -r -d '' path; do
-      [[ -d "$path" && ! -L "$path" ]] || exit 65
-      basename -- "$path"
-    done < <(find "$workspace_skills" -mindepth 1 -maxdepth 1 -print0) | LC_ALL=C sort
-  fi
-  exit 0
+  list_workspace_folders
+  exit $?
 fi
 
 employee_id="${OMC_EMPLOYEE_ID:-}"

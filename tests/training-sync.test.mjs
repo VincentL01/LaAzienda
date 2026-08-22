@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
@@ -180,15 +182,20 @@ test("only an HRM-owned prior manifest authorizes deletion and application is fa
   assert.match(reconciler, /managed_manifest_name="\.omc-training-managed\.json"/);
   assert.match(reconciler, /last_good_manifest_name="\.omc-training-managed\.last-good\.json"/);
   assert.match(reconciler, /mktemp "\$parent\/\.omc-publish-/);
+  assert.match(reconciler, /input_file="\$\(mktemp\)"[\s\S]*cat > "\$input_file"/);
+  assert.match(reconciler, /actual_hash="\$\(sha256sum -- "\$input_file"\)"[\s\S]*actual_size="\$\(stat -c %s -- "\$input_file"\)"/);
+  assert.match(reconciler, /actual_size="\$\(stat -c %s -- "\$stage"\)"[\s\S]*actual_hash="\$\(sha256sum -- "\$stage"\)"[\s\S]*actual_size.*expected_size.*actual_hash.*expected_hash/);
+  assert.match(reconciler, /\[\[ -d "\$parent" && ! -L "\$parent" \]\][\s\S]*chmod 0755 "\$parent"; chown 1001:1001 "\$parent"/);
   assert.match(reconciler, /mv -T -- "\$stage" "\$destination"/);
-  assert.match(reconciler, /write_volume_file "\$skills_volume" "\$prior_manifest_name"/);
+  assert.match(reconciler, /publish_manifest_file "\$skills_volume" "\$prior_manifest_name"/);
+  assert.match(reconciler, /publish_manifest_file[\s\S]*expected_hash=.*sha256sum[\s\S]*expected_size=.*wc -c[\s\S]*write_volume_file.*expected_hash.*expected_size[\s\S]*readback=.*read_volume_file[\s\S]*readback.*content/);
   assert.match(reconciler, /manifest_matches_installed_volume/);
   assert.match(reconciler, /staged_candidate=.*\$skill_manifest_name/);
   assert.match(reconciler, /managed_valid.*last_good_valid[\s\S]*managed_manifest="\$managed_candidate"/);
   assert.match(reconciler, /staged_valid[\s\S]*managed_manifest="\$staged_candidate"/);
-  const authorityRepair = reconciler.indexOf('write_volume_file "$skills_volume" "$managed_manifest_name" 0644');
-  const repairedBackup = reconciler.indexOf('write_volume_file "$skills_volume" "$last_good_manifest_name" 0644', authorityRepair);
-  const currentMutation = reconciler.indexOf('write_volume_file "$skills_volume" "$prior_manifest_name" 0644', repairedBackup);
+  const authorityRepair = reconciler.indexOf('publish_manifest_file "$skills_volume" "$managed_manifest_name"');
+  const repairedBackup = reconciler.indexOf('publish_manifest_file "$skills_volume" "$last_good_manifest_name"', authorityRepair);
+  const currentMutation = reconciler.indexOf('publish_manifest_file "$skills_volume" "$prior_manifest_name"', repairedBackup);
   assert.ok(authorityRepair > 0 && authorityRepair < repairedBackup && repairedBackup < currentMutation,
     "an exact active-volume match must be republished as authority before a new mutation");
 });
@@ -223,8 +230,14 @@ test("authority recovery converges every publication crash window without trusti
   assert.equal(select(malformedPrimary, current, old), current,
     "a JSON-valid but contract-malformed primary cannot overwrite its valid backup");
   assert.match(reconciler, /valid_managed_manifest[\s\S]*assignmentVersion[\s\S]*\.removals[\s\S]*unique/);
-  assert.ok(reconciler.indexOf('write_volume_file "$skills_volume" "$managed_manifest_name" 0644') <
-    reconciler.indexOf('write_volume_file "$skills_volume" "$last_good_manifest_name" 0644'));
+  assert.match(reconciler, /valid_managed_manifest[\s\S]*jq -es[\s\S]*length == 1 and \(\.\[0\] \|/);
+  assert.match(containerSync, /validate_ro_manifest[\s\S]*jq -es[\s\S]*length == 1 and \(\.\[0\] \|/);
+  assert.match(reconciler, /valid_applied_evidence[\s\S]*jq -es[\s\S]*length == 1 and \(\.\[0\] \|[\s\S]*expectedSkills[\s\S]*verifiedHash == \.sourceHash/);
+  assert.match(reconciler, /training_generation[\s\S]*jq -ers[\s\S]*length == 1[\s\S]*invalid training generation envelope/);
+  assert.match(reconciler, /empty_installed_proven=false[\s\S]*manifest_matches_installed_volume[\s\S]*empty_installed_proven=true/);
+  assert.match(reconciler, /managed_contract_valid.*last_good_contract_valid[\s\S]*empty_installed_proven[\s\S]*managed_manifest="\$empty_manifest"/);
+  assert.ok(reconciler.indexOf('publish_manifest_file "$skills_volume" "$managed_manifest_name"') <
+    reconciler.indexOf('publish_manifest_file "$skills_volume" "$last_good_manifest_name"'));
 });
 
 test("filesystem contracts reject unsafe roots and hash content plus modes without lossy pipelines", () => {
@@ -239,6 +252,14 @@ test("filesystem contracts reject unsafe roots and hash content plus modes witho
   assert.match(containerSync, /realpath -m/);
   assert.match(containerSync, /resolved.*\/workspace/);
   assert.match(containerSync, /tar -C "\$source" -cf - \. \| tar -C "\$staged" -xf -/);
+  assert.match(containerSync, /list_workspace_folders[\s\S]*if ! find "\$workspace_skills"[\s\S]*sort -z "\$list" -o "\$list"/);
+  assert.doesNotMatch(containerSync, /done < <\(find "\$workspace_skills"/);
+  const absenceProof = containerSync.slice(
+    containerSync.indexOf('if [[ "${1:-}" == "--verify-workspace-absent" ]]'),
+    containerSync.indexOf('if [[ "${1:-}" == "--list-workspace-folders" ]]'),
+  );
+  assert.match(absenceProof, /active_folders="\$\(list_workspace_folders\)" \|\| exit \$\?/);
+  assert.doesNotMatch(absenceProof, /! -e "\$workspace_skills\/\$folder"/);
 });
 
 test("active skills and claim eligibility stay behind HRM-controlled process and volume boundaries", () => {
@@ -249,6 +270,15 @@ test("active skills and claim eligibility stay behind HRM-controlled process and
   assert.match(reconciler, /actual_active_folders.*expected_active_folders/);
   assert.match(reconciler, /actual_policy_hash/);
   assert.match(reconciler, /company_paths_safe/);
+  assert.match(reconciler, /volume_control_paths_safe[\s\S]*control_dir_ready[\s\S]*stat -c %u[\s\S]*owner_mode[\s\S]*owner_mode.*3.*owner_mode.*7/);
+  assert.match(reconciler, /docker exec "\$container_name"[\s\S]*-O \/workspace\/\.company[\s\S]*-w \/workspace\/\.company[\s\S]*-x \/workspace\/\.company/);
+  assert.match(reconciler, /normalize_volume_control_paths[\s\S]*chmod 0755 "\$path"; chown 1001:1001 "\$path"/);
+  const policyRepair = reconciler.slice(
+    reconciler.indexOf('if [[ "$policy_needs_repair" == true'),
+    reconciler.indexOf('if [[ "$policy_ready" != true'),
+  );
+  assert.ok(policyRepair.indexOf('docker stop "$container_name"') < policyRepair.indexOf('normalize_volume_control_paths "$workspace_volume"'));
+  assert.match(policyRepair, /volume_control_paths_safe "\$workspace_volume" \|\| policy_ready=false/);
   assert.match(reconciler, /workforce_ready.*false/);
   assert.match(reconciler, /existing_employee[\s\S]*workforce_ready=false[\s\S]*report_runtime "\$employee_id" not_found/);
   assert.match(reconciler, /exit 75/);
@@ -269,12 +299,59 @@ test("active skills and claim eligibility stay behind HRM-controlled process and
   assert.match(companyLoop, /phase:"executing",executionStatus:null/);
   assert.match(companyLoop, /phase:"post-exec",executionStatus:\$executionStatus/);
   assert.match(companyLoop, /recovered_phase.*post-exec[\s\S]*recovered_execution_status.*-eq 0[\s\S]*validate_result_json/);
+  assert.match(companyLoop, /validate_result_json[\s\S]*jq -es[\s\S]*length == 1 and \(\.\[0\] \|/);
+  assert.match(companyLoop, /validate_terminal_payload[\s\S]*jq -es[\s\S]*length == 1 and \(\.\[0\] \|/);
+  assert.match(companyLoop, /recover_interrupted_run[\s\S]*marker_payload[\s\S]*jq -es[\s\S]*length == 1 and \(\.\[0\] \|/);
   assert.match(companyLoop, /knowledge[\s\S]*gsub\("\^\\\\s\+\|\\\\s\+\$"; ""\)[\s\S]*length >= 20/);
   assert.match(companyLoop, /sync -f "\$temporary"[\s\S]*mv -f -- "\$temporary" "\$target"[\s\S]*sync -f "\$parent" \|\| return 74/);
   assert.doesNotMatch(companyLoop, /post_run_action "\$(?:complete|fail)_payload"/);
   assert.doesNotMatch(entrypoint, /sync-company-skills/);
   assert.match(bridgeRuntime, /\/company\/state:ro/);
+  for (const directory of [
+    ".company\\training",
+    ".company\\runs",
+    ".company\\reconcile",
+    ".company\\dispatcher",
+    ".company\\dispatcher\\terminal-outbox",
+  ]) {
+    assert.ok(bridgeRuntime.includes(`"${directory}"`), `host bootstrap precreates ${directory}`);
+  }
+  assert.match(bridgeRuntime, /Assert-SafeRuntimeDirectory/);
+  assert.match(bridgeRuntime, /FileAttributes\]::ReparsePoint/);
+  assert.match(bridgeRuntime, /Test-ContainedRuntimePath/);
   assert.doesNotMatch(reconciler, /reconcile_state_root="\$state_root/);
+});
+
+test("host bootstrap precreates only contained non-reparse HRM control directories", { skip: process.platform !== "win32" }, () => {
+  const powershell = path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const bridgePath = new URL("../runtime/bridge.ps1", import.meta.url).pathname.slice(1).replaceAll("/", "\\");
+  const command = `
+    $source = [IO.File]::ReadAllText('${bridgePath.replaceAll("'", "''")}')
+    $start = $source.IndexOf('function Test-ContainedRuntimePath')
+    $end = $source.IndexOf('if (-not (Test-ContainedRuntimePath $stateRoot', $start)
+    if ($start -lt 0 -or $end -le $start) { exit 41 }
+    Invoke-Expression $source.Substring($start, $end - $start)
+    $root = Join-Path ([IO.Path]::GetTempPath()) ('omc-test-runtime-' + [Guid]::NewGuid().ToString('N'))
+    $outside = $root + '-outside'
+    try {
+      New-Item -ItemType Directory -Path $root, $outside | Out-Null
+      foreach ($relative in @('.company\\training','.company\\runs','.company\\reconcile','.company\\dispatcher','.company\\dispatcher\\terminal-outbox')) {
+        Assert-SafeRuntimeDirectory $root $relative | Out-Null
+        if (-not (Test-Path -LiteralPath (Join-Path $root $relative) -PathType Container)) { exit 42 }
+      }
+      if (Test-ContainedRuntimePath $root ($root + '-escape')) { exit 43 }
+      $junction = Join-Path $root '.company\\redirect'
+      New-Item -ItemType Junction -Path $junction -Target $outside | Out-Null
+      $blocked = $false
+      try { Assert-SafeRuntimeDirectory $root '.company\\redirect\\child' | Out-Null } catch { $blocked = $true }
+      if (-not $blocked) { exit 44 }
+      Remove-Item -LiteralPath $junction -Force
+    } finally {
+      if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+      if (Test-Path -LiteralPath $outside) { Remove-Item -LiteralPath $outside -Recurse -Force }
+    }
+  `;
+  execFileSync(powershell, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], { stdio: "pipe" });
 });
 
 test("claims are atomically bound to the exact reconciled training generation", () => {
@@ -285,7 +362,7 @@ test("claims are atomically bound to the exact reconciled training generation", 
   assert.equal((trainingRoute.match(/UPDATE control_generations SET generation = generation \+ 1/g) ?? []).length, 5);
   assert.match(employeeRoute, /effectiveSkills\.length > 0[\s\S]*UPDATE control_generations SET generation = generation \+ 1/);
   assert.match(reconciler, /final_training_state=.*\/api\/training/);
-  assert.match(reconciler, /reconciled_training_generation=.*desiredGeneration/);
+  assert.match(reconciler, /reconciled_training_generation=.*training_generation/);
   assert.match(reconciler, /reconciled_training_generation[\s\S]*workforce=.*\/api\/employees[\s\S]*confirmed_training_generation[\s\S]*mixed snapshot/);
   assert.match(reconciler, /claim_training_generation" != "\$reconciled_training_generation"[\s\S]*exit 75/);
   assert.match(reconciler, /publish_claim_generation "\$claim_training_generation"/);

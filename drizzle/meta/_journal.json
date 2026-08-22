@@ -57,6 +57,48 @@
       "when": 1787341534927,
       "tag": "0007_sweet_omega_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1787378218391,
+      "tag": "0008_lean_lenny_balinger",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1787381643714,
+      "tag": "0009_panoramic_strong_guy",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1787385671678,
+      "tag": "0010_smooth_grandmaster",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1787390024480,
+      "tag": "0011_glossy_morg",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1787394717656,
+      "tag": "0012_common_gideon",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1787397208426,
+      "tag": "0013_silly_cloak",
+      "breakpoints": true
     }
   ]
 }

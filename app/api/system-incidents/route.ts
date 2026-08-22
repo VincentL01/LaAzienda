@@ -91,6 +91,18 @@ async function failIncident(workerId: string, body: Record<string, unknown>) {
   const failureCode: FailureCode = Object.hasOwn(failureMessages, requestedCode) ? requestedCode : "network";
   if (!incidentId || !leaseToken) return Response.json({ error: "Incident lease is required" }, { status: 400 });
 
+  const terminalFailure = failureCode === "permission_denied" || failureCode === "issues_disabled";
+  if (terminalFailure) {
+    const blocked = await env.DB.prepare(`UPDATE system_incidents SET status = 'blocked', next_attempt_at = NULL,
+      lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, last_filing_error = ?
+      WHERE id = ? AND status = 'filing' AND lease_owner = ? AND lease_token = ?`)
+      .bind(failureMessages[failureCode], incidentId, workerId, leaseToken).run();
+    if ((blocked.meta.changes ?? 0) === 0) {
+      return Response.json({ error: "Incident filing lease is no longer active" }, { status: 409 });
+    }
+    return Response.json({ ok: true, retry: false });
+  }
+
   const incident = await env.DB.prepare(`SELECT filing_attempts AS filingAttempts
     FROM system_incidents WHERE id = ? AND status = 'filing' AND lease_owner = ? AND lease_token = ?`)
     .bind(incidentId, workerId, leaseToken).first<{ filingAttempts: number }>();
@@ -126,8 +138,8 @@ async function requeueBlockedIncidents() {
 
 export async function POST(request: Request) {
   try {
-    await ensureDatabase();
     if (!bridgeAuthorized(request)) return Response.json({ error: "Runtime bridge authorization failed" }, { status: 403 });
+    await ensureDatabase();
     const body = await request.json() as Record<string, unknown>;
     const workerId = cleanIdentifier(body.workerId);
     if (!workerId) return Response.json({ error: "A watcher identity is required" }, { status: 400 });

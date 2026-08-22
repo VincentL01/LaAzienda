@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   runtimeStatusLabels,
   statusLabels,
@@ -161,7 +162,9 @@ export function EmployeeOnboarding() {
     setSkillIds(cachedSkills.filter((skill) => recommended.has(skill.packageRef.split("@").at(-1) ?? skill.packageRef)).map((skill) => skill.id));
   }
 
-  if (!workforce) return <main className="loading-room"><span className="pixel-loader" /> Opening personnel files...</main>;
+  if (!workforce) return error
+    ? <main className="loading-room"><div><b>Personnel files are locked or unavailable.</b><p role="alert">{error}</p><Link href="/training">Unlock CEO controls in the Training Room</Link></div></main>
+    : <main className="loading-room"><span className="pixel-loader" /> Opening personnel files...</main>;
 
   return (
     <main className="people-shell">
@@ -225,7 +228,7 @@ export function EmployeeOnboarding() {
               </div>
             </fieldset>
             <fieldset className="skill-picker">
-              <legend>Installed skills</legend>
+              <legend>Desired training</legend>
               {cachedSkills.length ? cachedSkills.map((skill) => <label key={skill.id} aria-label={`Assign ${skill.name}`}>
                 <input type="checkbox" checked={skillIds.includes(skill.id)} onChange={(event) => setSkillIds((current) => event.target.checked ? [...current, skill.id] : current.filter((id) => id !== skill.id))} />
                 <span><b>{skill.name}</b><small>{skill.packageRef}</small></span>
@@ -249,7 +252,11 @@ export function EmployeeOnboarding() {
                 <div className="runtime-line"><span>Agent</span><b>{statusLabels[employee.status]}</b><span>Docker</span><b>{runtimeStatusLabels[employee.runtimeStatus]}</b></div>
                 <div className="employee-policy-line"><span>{employee.employmentType}</span><span>{employee.workspacePolicy}</span><span>{employee.resourceAccess}</span>{employee.dockerSocketAccess ? <strong>SOCKET HOLDER</strong> : null}{employee.handoffRequired ? <strong>HANDOFF</strong> : null}</div>
                 <div className="mailbox-line"><code>{employee.emailAddress}</code><span className={`mailbox-${employee.mailboxStatus}`}>{employee.mailboxStatus}</span></div>
-                <div className="skill-chips">{employee.skills.length ? employee.skills.map((skill) => <span key={skill.id}>{skill.name}</span>) : <i>No skills assigned</i>}</div>
+                <div className="skill-chips">
+                  {employee.skills.length ? employee.skills.map((skill) => <span key={skill.id}>Verified · {skill.name}</span>) : <i>No verified skills</i>}
+                  {employee.desiredSkills.filter((desiredSkill) => !employee.skills.some((verifiedSkill) => verifiedSkill.id === desiredSkill.id))
+                    .map((skill) => <span key={`pending:${skill.id}`}>Pending · {skill.name}</span>)}
+                </div>
                 <details><summary>Employee brain</summary><p>{employee.systemPrompt}</p><code>{employee.containerName}</code></details>
                 <button className={desired === "running" ? "primary-action" : "secondary-action"} disabled={busy === employee.id} onClick={() => act({ action: "requestRuntime", employeeId: employee.id, desired }, employee.id)}>
                   {busy === employee.id ? "Recording request..." : employee.dockerSocketAccess && desired === "running" ? "Bootstrap HR Manager" : desired === "running" ? "Request HRM start" : "Request HRM stop"}

@@ -10,6 +10,9 @@ import {
 } from "@/lib/company";
 import { readWorkforce } from "@/lib/server/workforce";
 import { bridgeAuthorized } from "@/lib/server/bridge-auth";
+import { readBoundedJsonObject } from "@/lib/server/bounded-json";
+import { ownerAuthorized } from "@/lib/server/owner-auth";
+import { canonicalSkillFolder } from "@/lib/training-contract";
 
 function cleanText(value: unknown, max: number) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -28,8 +31,12 @@ function randomItem<T>(items: T[]) {
   return items[value[0] % items.length];
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const authorized = bridgeAuthorized(request) || await ownerAuthorized(request);
+    if (!authorized) {
+      return Response.json({ error: "Unlock CEO controls in the Training Room before accessing workforce records." }, { status: 403 });
+    }
     await ensureDatabase();
     return Response.json(await readWorkforce());
   } catch (error) {
@@ -39,8 +46,18 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const bridgeIsAuthorized = bridgeAuthorized(request);
+    const ownerIsAuthorized = await ownerAuthorized(request);
+    if (!bridgeIsAuthorized && !ownerIsAuthorized) {
+      return Response.json({ error: "Employee control authorization is required" }, { status: 403 });
+    }
+    const parsed = await readBoundedJsonObject(request, 32 * 1024);
+    if (!parsed.ok) return Response.json({ error: parsed.error }, { status: parsed.status });
+    const body = parsed.value;
+    if (body.action === "reportRuntime" ? !bridgeIsAuthorized : !["onboard", "requestRuntime"].includes(String(body.action)) || !ownerIsAuthorized) {
+      return Response.json({ error: "Unlock CEO controls in the Training Room before changing workforce state." }, { status: 403 });
+    }
     await ensureDatabase();
-    const body = (await request.json()) as Record<string, unknown>;
     const d1 = env.DB;
 
     if (body.action === "onboard") {
@@ -105,16 +122,21 @@ export async function POST(request: Request) {
       const character = await d1.prepare("SELECT id FROM character_packs WHERE id = ? AND cache_status = 'cached'").bind(petId).first();
       if (!character) return Response.json({ error: "The role's character policy has no cached character available" }, { status: 400 });
 
-      const cachedSkills = await d1.prepare(`SELECT id, package_ref AS packageRef
-        FROM training_center_skills WHERE cache_status = 'cached'`).all<{ id: string; packageRef: string }>();
+      const cachedSkills = await d1.prepare(`SELECT id, package_ref AS packageRef, folder_key AS folderKey
+        FROM training_center_skills WHERE approved_digest IS NOT NULL
+          AND approved_digest = observed_digest`).all<{ id: string; packageRef: string; folderKey: string }>();
       const recommended = new Set<string>(JSON.parse(roleProfile.recommendedSkills));
       const recommendedSkillIds = cachedSkills.results
         .filter((skill) => recommended.has(skill.packageRef.split("@").at(-1) ?? ""))
         .map((skill) => skill.id);
       const effectiveSkillIds = [...new Set([...skillIds, ...recommendedSkillIds])].slice(0, 30);
-      for (const skillId of effectiveSkillIds) {
-        const skill = await d1.prepare("SELECT id FROM training_center_skills WHERE id = ? AND cache_status = 'cached'").bind(skillId).first();
-        if (!skill) return Response.json({ error: "Every assigned skill must be cached in the Training Center" }, { status: 400 });
+      const effectiveSkills = effectiveSkillIds.map((skillId) => cachedSkills.results.find((skill) => skill.id === skillId));
+      if (effectiveSkills.some((skill) => !skill || !canonicalSkillFolder(skill.folderKey))) {
+        return Response.json({ error: "Every assigned skill must have a currently observed, CEO-approved cache revision" }, { status: 400 });
+      }
+      const folderKeys = effectiveSkills.map((skill) => canonicalSkillFolder(skill!.folderKey)!);
+      if (new Set(folderKeys).size !== folderKeys.length) {
+        return Response.json({ error: "Two selected skills reserve the same employee workspace folder" }, { status: 409 });
       }
 
       const id = `employee-${crypto.randomUUID()}`;
@@ -136,8 +158,14 @@ export async function POST(request: Request) {
           .bind(`${name} joined ${department} as ${role}.`),
         d1.prepare("INSERT INTO activity (message, tone) VALUES (?, 'neutral')")
           .bind(`${emailAddress} was requested from the local mail service.`),
-        ...effectiveSkillIds.map((skillId) => d1.prepare("INSERT INTO employee_skills (employee_id, skill_id) VALUES (?, ?)").bind(id, skillId)),
+        ...effectiveSkills.map((skill) => d1.prepare(`INSERT INTO employee_skills (
+          employee_id, skill_id, folder_key, desired_state, assignment_version, assigned_at, updated_at
+        ) VALUES (?, ?, ?, 'assigned', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`).bind(id, skill!.id, canonicalSkillFolder(skill!.folderKey)!)),
       ];
+      if (effectiveSkills.length > 0) {
+        statements.push(d1.prepare(`UPDATE control_generations SET generation = generation + 1,
+          updated_at = CURRENT_TIMESTAMP WHERE control_key = 'training'`));
+      }
       await d1.batch(statements);
     } else if (body.action === "requestRuntime") {
       const employeeId = cleanText(body.employeeId, 80);
@@ -155,7 +183,7 @@ export async function POST(request: Request) {
         ]);
       }
     } else if (body.action === "reportRuntime") {
-      if (!bridgeAuthorized(request)) return Response.json({ error: "Runtime bridge authorization failed" }, { status: 403 });
+      if (!bridgeIsAuthorized) return Response.json({ error: "Runtime bridge authorization failed" }, { status: 403 });
       const employeeId = cleanText(body.employeeId, 80);
       const eventKey = cleanText(body.eventKey, 160);
       const detail = cleanText(body.detail, 500);

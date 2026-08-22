@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import type { MailroomState } from "@/lib/company";
 
 export function CompanyMailroom() {
@@ -69,7 +70,9 @@ export function CompanyMailroom() {
     }
   }
 
-  if (!mailroom) return <main className="loading-room"><span className="pixel-loader" /> Opening the company mailroom...</main>;
+  if (!mailroom) return error
+    ? <main className="loading-room"><div><b>Company mail is locked or unavailable.</b><p role="alert">{error}</p><Link href="/training">Unlock CEO controls in the Training Room</Link></div></main>
+    : <main className="loading-room"><span className="pixel-loader" /> Opening the company mailroom...</main>;
 
   const dorothy = mailroom.employees.find((employee) => employee.id === "employee-dorothy");
   const senders = mailroom.employees.filter((employee) => employee.resourceAccess !== "read-all");

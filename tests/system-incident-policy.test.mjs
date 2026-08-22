@@ -128,9 +128,72 @@ test("distinguishes a GitHub 403 rate limit from a genuine permission denial", {
 
 test("keeps public incident issues on an allowlisted metadata boundary", async () => {
   const watcher = await readFile(new URL("../runtime/Watch-SystemIncidents.ps1", import.meta.url), "utf8");
-  const publicPayload = watcher.slice(watcher.indexOf("function New-IncidentIssue"), watcher.indexOf("function Get-VerifiedIssue"));
+  const publicPayload = watcher.slice(watcher.indexOf("function Get-IncidentIssueDocument"), watcher.indexOf("function Get-VerifiedIssue"));
 
   assert.doesNotMatch(publicPayload, /Incident\.(?:summary|evidence|employeeName|taskTitle|firstSeenAt)/);
   assert.match(publicPayload, /Get-PublicRoute/);
   assert.match(publicPayload, /public issue contains only allowlisted operational metadata/i);
+});
+
+test("accepts only owner-authored incident issues with the allowlisted document shape", { skip: process.platform !== "win32" }, async () => {
+  const powershell = path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const watcher = await readFile(new URL("../runtime/Watch-SystemIncidents.ps1", import.meta.url), "utf8");
+  const validator = watcher.slice(watcher.indexOf("function Test-IncidentIssue"), watcher.indexOf("function Find-ExistingIssue"));
+  const search = watcher.slice(watcher.indexOf("function Find-ExistingIssue"), watcher.indexOf("function Get-IncidentIssueDocument"));
+  const create = watcher.slice(watcher.indexOf("function New-IncidentIssue"), watcher.indexOf("function Get-VerifiedIssue"));
+  const readBack = watcher.slice(watcher.indexOf("function Get-VerifiedIssue"), watcher.indexOf("function Get-ResponseHeaderValue"));
+  const command = [
+    "$githubOwner = 'VincentL01'",
+    validator,
+    "$marker = '<!-- laazienda-system-incident:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->'",
+    "$title = '[Portal bug aaaaaaaa] GET /api/company'",
+    "$body = @($marker, '', '## Automated Company Portal incident', '', 'A deterministic portal failure was observed while a Codex employee run was active.', '', '- Category: ``api_5xx``', '- Request: ``GET /api/company``', '- HTTP status: ``500``', '- Employee record: ``employee-codex-1``', '- Run: ``run-12345678``', '- Task: ``task-123``', '- Portal commit: ``abcdef0``', '- Occurrences before filing: ``1``', '', '## Diagnostic boundary', '', 'The public issue contains only allowlisted operational metadata. Diagnostic text remains in the machine-local D1 run timeline for CEO review.') -join \"`n\"",
+    "$spoofed = [pscustomobject]@{ title = $title; body = $body; user = [pscustomobject]@{ login = 'marker-spoofer' } }",
+    "$owned = [pscustomobject]@{ title = $title; body = $body; user = [pscustomobject]@{ login = 'VincentL01' } }",
+    "Write-Output (Test-IncidentIssue $spoofed $title $marker)",
+    "Write-Output (Test-IncidentIssue $owned $title $marker)",
+  ].join("\n");
+  const results = execFileSync(powershell, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], { encoding: "utf8" })
+    .trim().split(/\r?\n/);
+
+  assert.deepEqual(results, ["False", "True"]);
+  assert.match(watcher, /\$githubOwner = "VincentL01"/);
+  assert.match(search, /Test-IncidentIssue \$item/);
+  assert.match(create, /Test-IncidentIssue \$created/);
+  assert.match(readBack, /Test-IncidentIssue \$verified/g);
+});
+
+test("blocks deterministic GitHub failures atomically while transient failures retain backoff", async () => {
+  const route = await readFile(new URL("../app/api/system-incidents/route.ts", import.meta.url), "utf8");
+  const failureHandler = route.slice(route.indexOf("async function failIncident"), route.indexOf("async function requeueBlockedIncidents"));
+  const terminalBranch = failureHandler.slice(failureHandler.indexOf("const terminalFailure"), failureHandler.indexOf("const incident ="));
+  const transientBranch = failureHandler.slice(failureHandler.indexOf("const incident ="));
+
+  assert.match(terminalBranch, /failureCode === "permission_denied" \|\| failureCode === "issues_disabled"/);
+  assert.match(terminalBranch, /UPDATE system_incidents SET status = 'blocked', next_attempt_at = NULL/);
+  assert.match(terminalBranch, /WHERE id = \? AND status = 'filing' AND lease_owner = \? AND lease_token = \?/);
+  assert.match(terminalBranch, /Response\.json\(\{ ok: true, retry: false \}\)/);
+  assert.doesNotMatch(terminalBranch, /status = 'pending'|Date\.now/);
+
+  assert.match(transientBranch, /UPDATE system_incidents SET status = 'pending', next_attempt_at = \?/);
+  assert.match(transientBranch, /Date\.now\(\)/);
+  assert.match(transientBranch, /Response\.json\(\{ ok: true, retry: true \}\)/);
+  assert.match(route, /requeueBlockedIncidents[\s\S]*WHERE status = 'blocked'/);
+});
+
+test("live incident watcher requeues blocked rows only after a changed credential is validated", async () => {
+  const watcher = await readFile(new URL("../runtime/Watch-SystemIncidents.ps1", import.meta.url), "utf8");
+  const credentialRefresh = watcher.slice(watcher.indexOf("function Update-GitHubCredential"), watcher.indexOf("function Write-WatcherLog"));
+  const delivery = watcher.slice(watcher.indexOf("function Invoke-IncidentDelivery"), watcher.indexOf("$createdNew ="));
+
+  assert.match(credentialRefresh, /SHA256.*ComputeHash/s);
+  assert.match(credentialRefresh, /\$githubApi\/user/);
+  assert.match(credentialRefresh, /identity\.login -cne "VincentL01"/);
+  assert.match(credentialRefresh, /fingerprint -eq \$script:githubCredentialFingerprint/);
+  assert.match(watcher, /system-incident-github-credential\.sha256/);
+  assert.match(watcher, /acknowledgedGithubCredentialFingerprint = if \(Test-Path[\s\S]*\^\[a-f0-9\]\{64\}\$/);
+  assert.match(watcher, /function Save-AcknowledgedGitHubCredentialFingerprint[\s\S]*File\]::Replace/);
+  assert.match(delivery, /acknowledgedGithubCredentialFingerprint -ne \$script:githubCredentialFingerprint[\s\S]*requeueBlocked[\s\S]*Save-AcknowledgedGitHubCredentialFingerprint[\s\S]*acknowledgedGithubCredentialFingerprint = \$script:githubCredentialFingerprint/);
+  assert.ok(delivery.indexOf("requeueBlocked") < delivery.indexOf("Save-AcknowledgedGitHubCredentialFingerprint"));
+  assert.doesNotMatch(watcher, /Write-WatcherLog[^\r\n]*(?:token|fingerprint)/i);
 });

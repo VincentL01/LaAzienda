@@ -10,14 +10,21 @@ import {
   type CompanyState,
   type EmployeeStatus,
   type TaskStatus,
+  type DesiredEmployeeSkill,
   type TrainingSkill,
 } from "@/lib/company";
 import { bridgeAuthorized } from "@/lib/server/bridge-auth";
+import { readBoundedJsonObject } from "@/lib/server/bounded-json";
+import { requiredControlPrincipal } from "@/lib/server/control-access";
+import { ownerAuthorized } from "@/lib/server/owner-auth";
 import { findActiveTaskConflict, type ActiveTaskIdentity } from "@/lib/task-policy";
+
+const companyBodyLimit = 64 * 1024;
+const ownerUnlockMessage = "Unlock CEO controls in the Training Room before accessing company records.";
 
 async function readCompany(): Promise<CompanyState> {
   const d1 = env.DB;
-  const [employees, tasks, mappings, activity, assignedSkills, projects, knowledge, handoffs, runs, runEvents, secretaryInquiries, repositorySyncs, systemIncidents] = await Promise.all([
+  const [employees, tasks, mappings, activity, verifiedSkills, desiredSkills, projects, knowledge, handoffs, runs, runEvents, secretaryInquiries, repositorySyncs, systemIncidents] = await Promise.all([
     d1.prepare(`SELECT employees.id, employees.name, role, department, status, pet_id AS petId,
       character_packs.spritesheet_path AS spritesheetPath,
       role_profile_id AS roleProfileId, employment_type AS employmentType,
@@ -29,7 +36,7 @@ async function readCompany(): Promise<CompanyState> {
       last_runtime_at AS lastRuntimeAt, current_task_id AS currentTaskId,
       employees.created_at AS createdAt FROM employees
       LEFT JOIN character_packs ON character_packs.id = employees.pet_id
-      ORDER BY CASE employees.id WHEN 'employee-hrm' THEN 0 WHEN 'employee-dorothy' THEN 1 WHEN 'employee-aurora' THEN 2 ELSE 3 END, employees.created_at`).all(),
+      ORDER BY CASE employees.id WHEN 'employee-hrm' THEN 0 WHEN 'employee-dorothy' THEN 1 ELSE 2 END, employees.created_at`).all(),
     d1.prepare(`SELECT id, title, brief, status, priority, assignee_id AS assigneeId,
       project_id AS projectId, handoff_required AS handoffRequired,
       created_at AS createdAt, updated_at AS updatedAt
@@ -39,11 +46,46 @@ async function readCompany(): Promise<CompanyState> {
       speed_ms AS speedMs FROM animation_mappings ORDER BY rowid`).all(),
     d1.prepare(`SELECT id, message, tone, created_at AS createdAt
       FROM activity ORDER BY id DESC LIMIT 30`).all(),
-    d1.prepare(`SELECT es.employee_id AS employeeId, s.id, s.package_ref AS packageRef,
-      s.name, s.description, s.source_url AS sourceUrl, s.install_command AS installCommand,
-      s.cache_status AS cacheStatus, s.created_at AS createdAt, s.cached_at AS cachedAt
+    d1.prepare(`WITH latest AS (
+        SELECT es.employee_id, es.skill_id, es.desired_state, es.assignment_version,
+          (SELECT MAX(o.id) FROM training_sync_observations o
+            WHERE o.employee_id = es.employee_id AND o.skill_id = es.skill_id
+              AND o.operation = CASE es.desired_state WHEN 'revoked' THEN 'remove' ELSE 'install' END
+              AND o.assignment_version = es.assignment_version) AS observation_id
+        FROM employee_skills es
+      ), converged AS (
+        SELECT latest.employee_id, MIN(o.manifest_version) AS manifest_version
+        FROM latest JOIN training_sync_observations o ON o.id = latest.observation_id
+        GROUP BY latest.employee_id
+        HAVING COUNT(*) = (SELECT COUNT(*) FROM latest expected WHERE expected.employee_id = latest.employee_id)
+          AND MIN(CASE WHEN o.status = 'verified' THEN 1 ELSE 0 END) = 1
+          AND COUNT(DISTINCT o.manifest_version) = 1
+      )
+      SELECT es.employee_id AS employeeId, s.id, s.package_ref AS packageRef,
+        s.name, s.description, s.source_url AS sourceUrl, s.install_command AS installCommand,
+        s.folder_key AS folderKey, s.cache_status AS cacheStatus,
+        s.observed_digest AS observedDigest, s.observed_at AS observedAt,
+        s.approved_digest AS approvedDigest, s.approval_version AS approvalVersion,
+        s.approved_at AS approvedAt, s.created_at AS createdAt, s.cached_at AS cachedAt,
+        s.updated_at AS updatedAt
       FROM employee_skills es JOIN training_center_skills s ON s.id = es.skill_id
+      JOIN latest ON latest.employee_id = es.employee_id AND latest.skill_id = es.skill_id
+      JOIN training_sync_observations o ON o.id = latest.observation_id
+      JOIN converged ON converged.employee_id = es.employee_id AND converged.manifest_version = o.manifest_version
+      WHERE es.desired_state = 'assigned' AND o.operation = 'install' AND o.status = 'verified'
+        AND o.source_hash = s.approved_digest AND o.staged_hash = s.approved_digest
+        AND o.verified_hash = s.approved_digest AND s.observed_digest = s.approved_digest
       ORDER BY s.name`).all(),
+    d1.prepare(`SELECT es.employee_id AS employeeId, es.assignment_version AS assignmentVersion,
+      es.assigned_at AS assignedAt, es.updated_at AS desiredUpdatedAt, es.folder_key AS folderKey,
+      s.id, s.package_ref AS packageRef, s.name, s.description, s.source_url AS sourceUrl,
+      s.install_command AS installCommand, s.cache_status AS cacheStatus,
+      s.observed_digest AS observedDigest, s.observed_at AS observedAt,
+      s.approved_digest AS approvedDigest, s.approval_version AS approvalVersion,
+      s.approved_at AS approvedAt, s.created_at AS createdAt, s.cached_at AS cachedAt,
+      s.updated_at AS updatedAt
+      FROM employee_skills es JOIN training_center_skills s ON s.id = es.skill_id
+      WHERE es.desired_state = 'assigned' ORDER BY s.name`).all(),
     d1.prepare(`SELECT id, name, brief, github_owner AS githubOwner,
       repository_name AS repositoryName, repository_url AS repositoryUrl,
       visibility, status, manager_id AS managerId, created_at AS createdAt, updated_at AS updatedAt
@@ -81,18 +123,20 @@ async function readCompany(): Promise<CompanyState> {
   ]);
 
   const employeeRows = employees.results.map((row) => {
-    const employee = row as unknown as Omit<CompanyState["employees"][number], "dockerSocketAccess" | "handoffRequired" | "skills"> & {
+    const employee = row as unknown as Omit<CompanyState["employees"][number], "dockerSocketAccess" | "handoffRequired" | "skills" | "desiredSkills"> & {
       dockerSocketAccess: number; handoffRequired: number;
     };
-    return { ...employee, dockerSocketAccess: Boolean(employee.dockerSocketAccess), handoffRequired: Boolean(employee.handoffRequired), skills: [] };
+    return { ...employee, dockerSocketAccess: Boolean(employee.dockerSocketAccess), handoffRequired: Boolean(employee.handoffRequired), skills: [], desiredSkills: [] };
   });
   const taskRows = tasks.results.map((row) => {
     const task = row as unknown as Omit<CompanyState["tasks"][number], "handoffRequired"> & { handoffRequired: number };
     return { ...task, handoffRequired: Boolean(task.handoffRequired) };
   });
-  const skillRows = assignedSkills.results as unknown as Array<TrainingSkill & { employeeId: string }>;
+  const skillRows = verifiedSkills.results as unknown as Array<TrainingSkill & { employeeId: string }>;
+  const desiredSkillRows = desiredSkills.results as unknown as Array<DesiredEmployeeSkill & { employeeId: string }>;
   for (const employee of employeeRows) {
     employee.skills = skillRows.filter((skill) => skill.employeeId === employee.id);
+    employee.desiredSkills = desiredSkillRows.filter((skill) => skill.employeeId === employee.id);
   }
   const runRows = runs.results.map((row) => {
     const run = row as unknown as Omit<CompanyState["runs"][number], "deliverables" | "decisions" | "followUp"> & {
@@ -120,8 +164,10 @@ async function readCompany(): Promise<CompanyState> {
   };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const authorized = bridgeAuthorized(request) || await ownerAuthorized(request);
+    if (!authorized) return Response.json({ error: ownerUnlockMessage }, { status: 403 });
     await ensureDatabase();
     return Response.json(await readCompany());
   } catch (error) {
@@ -134,9 +180,24 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    await ensureDatabase();
-    const body = (await request.json()) as Record<string, unknown>;
+    const bridgeIsAuthorized = bridgeAuthorized(request);
+    const ownerIsAuthorized = await ownerAuthorized(request);
+    if (!bridgeIsAuthorized && !ownerIsAuthorized) {
+      return Response.json({ error: ownerUnlockMessage }, { status: 403 });
+    }
+    const parsed = await readBoundedJsonObject(request, companyBodyLimit);
+    if (!parsed.ok) return Response.json({ error: parsed.error }, { status: parsed.status });
+    const body = parsed.value;
     const action = body.action;
+    const requiredPrincipal = requiredControlPrincipal("company", action);
+    if (!requiredPrincipal) return Response.json({ error: "Unknown company action" }, { status: 400 });
+    if (requiredPrincipal === "owner" && !ownerIsAuthorized) {
+      return Response.json({ error: ownerUnlockMessage }, { status: 403 });
+    }
+    if (requiredPrincipal === "bridge" && !bridgeIsAuthorized) {
+      return Response.json({ error: "Runtime bridge authorization failed" }, { status: 403 });
+    }
+    await ensureDatabase();
     const d1 = env.DB;
 
     if (action === "createTask") {
@@ -192,14 +253,18 @@ export async function POST(request: Request) {
       if (!assignee || ["read-all", "docker-provisioner"].includes(assignee.resourceAccess)) {
         return Response.json({ error: "Choose a Project Manager, Expert, or Contractor" }, { status: 400 });
       }
-      await d1.batch([
+      const assignmentResults = await d1.batch([
         d1.prepare(`UPDATE tasks SET assignee_id = ?, handoff_required = ?,
-          updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(assigneeId, assignee.handoffRequired, taskId),
+          updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'queued'`)
+          .bind(assigneeId, assignee.handoffRequired, taskId),
         d1.prepare(`UPDATE employees SET desired_runtime_status = 'running',
-          updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(assigneeId),
-        d1.prepare("INSERT INTO activity (message, tone) VALUES (?, 'planning')")
+          updated_at = CURRENT_TIMESTAMP WHERE id = ? AND changes() > 0`).bind(assigneeId),
+        d1.prepare("INSERT INTO activity (message, tone) SELECT ?, 'planning' WHERE changes() > 0")
           .bind(`CEO assigned "${task.title}" to ${assignee.name}; Aurelia will dispatch it.`),
       ]);
+      if (Number(assignmentResults[0]?.meta.changes ?? 0) === 0) {
+        return Response.json({ error: "The task left Inbox before this assignment could be committed" }, { status: 409 });
+      }
     } else if (action === "askSecretary") {
       const question = typeof body.question === "string" ? body.question.trim().slice(0, 1200) : "";
       if (question.length < 5) return Response.json({ error: "Ask Dorothy a specific company-status question" }, { status: 400 });
@@ -245,7 +310,6 @@ export async function POST(request: Request) {
         ]);
       }
     } else if (action === "reportProjectRepository") {
-      if (!bridgeAuthorized(request)) return Response.json({ error: "Runtime bridge authorization failed" }, { status: 403 });
       const projectId = typeof body.projectId === "string" ? body.projectId : "";
       const managerId = typeof body.managerId === "string" ? body.managerId : "";
       const repositoryName = typeof body.repositoryName === "string" ? body.repositoryName.trim() : "";
@@ -309,7 +373,6 @@ export async function POST(request: Request) {
         ]);
       }
     } else if (action === "retryAuthenticationBlocked" || action === "retryGithubAuthenticationBlocked") {
-      if (!bridgeAuthorized(request)) return Response.json({ error: "Runtime bridge authorization failed" }, { status: 403 });
       const authenticationMessage = action === "retryGithubAuthenticationBlocked"
         ? githubAuthenticationRequiredMessage
         : codexAuthenticationRequiredMessage;
@@ -432,7 +495,6 @@ export async function POST(request: Request) {
         d1.prepare("INSERT INTO activity (message, tone) VALUES (?, ?)").bind(`${employee.name} is now ${status}.`, status),
       ]);
     } else if (action === "reportRepositorySync") {
-      if (!bridgeAuthorized(request)) return Response.json({ error: "Runtime bridge authorization failed" }, { status: 403 });
       const repository = typeof body.repository === "string" ? body.repository.trim() : "";
       const branch = typeof body.branch === "string" ? body.branch.trim() : "";
       const sourceBranch = typeof body.sourceBranch === "string" ? body.sourceBranch.trim() : "";

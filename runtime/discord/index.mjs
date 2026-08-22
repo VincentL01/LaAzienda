@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { writeFileSync } from "node:fs";
+import { createServer, get } from "node:http";
 import {
   Client,
   Events,
@@ -12,13 +12,20 @@ import {
   discordCommandDefinitions,
   formatCompanyReport,
   formatEmployeeReport,
+  isAdapterRuntimeHealthy,
   isAuthorizedDiscordOwner,
   isDiscordStatusSnapshot,
 } from "./status.mjs";
 
 const BOT_TOKEN_PATH = "/run/secrets/discord_bot_token";
-const STATUS_TOKEN_PATH = "/run/secrets/company_status_token";
-const EXPECTED_EMPLOYEE_NAME = "Aurora";
+const GATEWAY_CLIENT_TOKEN_PATH = "/run/secrets/gateway_client_token";
+const STATUS_GATEWAY_URL = "http://omc-discord-status-gateway:8080/v1/status";
+const EXPECTED_EMPLOYEE_ID = "employee-hrm";
+const EXPECTED_EMPLOYEE_NAME = "Aurelia";
+const MAX_STATUS_BYTES = 256 * 1024;
+const HEALTH_PORT = 8081;
+const STATUS_REFRESH_INTERVAL_MS = 5_000;
+const MAX_STATUS_AGE_MS = 15_000;
 
 function requiredEnvironment(name) {
   const value = process.env[name]?.trim();
@@ -37,31 +44,83 @@ async function readSecret(path, label) {
   return value;
 }
 
+async function requestStatusSnapshot(clientToken) {
+  return new Promise((resolve, reject) => {
+    const request = get(STATUS_GATEWAY_URL, {
+      agent: false,
+      headers: { accept: "application/json", authorization: `Bearer ${clientToken}` },
+    }, (response) => {
+      const chunks = [];
+      let total = 0;
+      response.on("data", (chunk) => {
+        total += chunk.length;
+        if (total > MAX_STATUS_BYTES) response.destroy(new Error("Company status response exceeded its bound."));
+        else chunks.push(chunk);
+      });
+      response.on("error", reject);
+      response.on("end", () => {
+        if (response.statusCode !== 200 || !response.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+          reject(new Error(`Company status gateway returned ${response.statusCode ?? "unknown"}.`));
+          return;
+        }
+        try { resolve(JSON.parse(Buffer.concat(chunks, total).toString("utf8"))); }
+        catch { reject(new Error("Company status gateway returned invalid JSON.")); }
+      });
+    });
+    request.setTimeout(5_000, () => request.destroy(new Error("Company status gateway timed out.")));
+    request.on("error", reject);
+  });
+}
+
+function healthServer(isHealthy) {
+  const server = createServer((request, response) => {
+    if (request.method !== "GET" || request.url !== "/healthz") {
+      response.writeHead(request.method === "GET" ? 404 : 405, {
+        "cache-control": "no-store",
+        "content-length": "0",
+      });
+      response.end();
+      return;
+    }
+    response.writeHead(isHealthy() ? 204 : 503, {
+      "cache-control": "no-store",
+      "content-length": "0",
+    });
+    response.end();
+  });
+  server.requestTimeout = 1_000;
+  server.headersTimeout = 1_000;
+  server.keepAliveTimeout = 500;
+  return server;
+}
+
+function listenOnLoopback(server) {
+  return new Promise((resolve, reject) => {
+    const onError = (error) => reject(error);
+    server.once("error", onError);
+    server.listen(HEALTH_PORT, "127.0.0.1", () => {
+      server.off("error", onError);
+      resolve();
+    });
+  });
+}
+
 async function start() {
   const applicationId = validateSnowflake("applicationId", requiredEnvironment("OMC_DISCORD_APPLICATION_ID"));
   const ceoUserId = validateSnowflake("ceoUserId", requiredEnvironment("OMC_DISCORD_CEO_USER_ID"));
-  const employeeId = requiredEnvironment("OMC_DISCORD_EMPLOYEE_ID");
-  const controlUrl = new URL(requiredEnvironment("OMC_CONTROL_URL"));
-  const [botToken, statusToken] = await Promise.all([
+  const [botToken, gatewayClientToken] = await Promise.all([
     readSecret(BOT_TOKEN_PATH, "Discord bot token"),
-    readSecret(STATUS_TOKEN_PATH, "Company status token"),
+    readSecret(GATEWAY_CLIENT_TOKEN_PATH, "Gateway client token"),
   ]);
 
+  let lastStatusSuccessAt = 0;
   async function fetchSnapshot() {
-    const endpoint = new URL("/api/integrations/discord/status", controlUrl);
-    endpoint.searchParams.set("employeeId", employeeId);
-    const response = await fetch(endpoint, {
-      headers: { authorization: `Bearer ${statusToken}` },
-      cache: "no-store",
-      redirect: "error",
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!response.ok) throw new Error(`Company status endpoint returned ${response.status}.`);
-    const snapshot = await response.json();
+    const snapshot = await requestStatusSnapshot(gatewayClientToken);
     if (!isDiscordStatusSnapshot(snapshot)) throw new Error("Company status response did not match schema version 1.");
-    if (snapshot.integrationEmployee.id !== employeeId || snapshot.integrationEmployee.name !== EXPECTED_EMPLOYEE_NAME) {
-      throw new Error("The configured Discord employee must resolve exactly to Aurora.");
+    if (snapshot.integrationEmployee.id !== EXPECTED_EMPLOYEE_ID || snapshot.integrationEmployee.name !== EXPECTED_EMPLOYEE_NAME) {
+      throw new Error("The configured Discord employee must resolve exactly to Aurelia.");
     }
+    lastStatusSuccessAt = Date.now();
     return snapshot;
   }
 
@@ -75,7 +134,7 @@ async function start() {
 
   async function replyWithFailure(interaction) {
     const payload = {
-      content: "Aurora could not read a verified company snapshot. Check the local Discord adapter logs.",
+      content: "Aurelia could not read a verified company snapshot. Check the local Discord adapter logs.",
       allowedMentions: { parse: [] },
     };
     if (interaction.deferred || interaction.replied) await interaction.editReply(payload);
@@ -87,7 +146,7 @@ async function start() {
     try {
       if (!isAuthorizedInteraction(interaction)) {
         await interaction.reply({
-          content: "This Aurora bridge is reserved for its authorizing CEO.",
+          content: "This Aurelia bridge is reserved for its authorizing CEO.",
           allowedMentions: { parse: [] },
           flags: MessageFlags.Ephemeral,
         });
@@ -101,8 +160,8 @@ async function start() {
         : formatEmployeeReport(snapshot, interaction.options.getString("employee", true));
       await interaction.editReply(reply);
     } catch (error) {
-      console.error(`Aurora interaction failed (${interaction.id}, ${error instanceof Error ? error.name : "unknown"}).`);
-      try { await replyWithFailure(interaction); } catch { console.error(`Aurora could not close interaction ${interaction.id}.`); }
+      console.error(`Aurelia interaction failed (${interaction.id}, ${error instanceof Error ? error.name : "unknown"}).`);
+      try { await replyWithFailure(interaction); } catch { console.error(`Aurelia could not close interaction ${interaction.id}.`); }
     }
   }
 
@@ -113,21 +172,44 @@ async function start() {
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
   client.on(Events.InteractionCreate, (interaction) => { void handleInteraction(interaction); });
   client.once(Events.ClientReady, (readyClient) => {
-    writeFileSync("/tmp/aurora-ready", `${readyClient.user.id}\n`, { encoding: "utf8", mode: 0o600 });
-    console.log(`Aurora Discord adapter connected as ${readyClient.user.id}.`);
+    console.log(`Aurelia Discord adapter connected as ${readyClient.user.id}.`);
+    void refreshStatusHealth();
   });
+  const server = healthServer(() => isAdapterRuntimeHealthy({
+    discordReady: client.isReady(),
+    lastStatusSuccessAt,
+    maxStatusAgeMs: MAX_STATUS_AGE_MS,
+  }));
+  await listenOnLoopback(server);
+  let statusRefreshRunning = false;
+  async function refreshStatusHealth() {
+    if (!client.isReady() || statusRefreshRunning) return;
+    statusRefreshRunning = true;
+    try { await fetchSnapshot(); } catch { /* Health expires without logging response or credential data. */ }
+    finally { statusRefreshRunning = false; }
+  }
+  const statusRefresh = setInterval(() => { void refreshStatusHealth(); }, STATUS_REFRESH_INTERVAL_MS);
   for (const signal of ["SIGINT", "SIGTERM"]) {
     process.once(signal, () => {
+      clearInterval(statusRefresh);
+      server.close();
       client.destroy();
       process.exit(0);
     });
   }
-  await client.login(botToken);
+  try {
+    await client.login(botToken);
+    await refreshStatusHealth();
+  } catch (error) {
+    clearInterval(statusRefresh);
+    server.close();
+    throw error;
+  }
 }
 
 try {
   await start();
 } catch (error) {
-  console.error(`Aurora startup failed (${error instanceof Error ? error.name : "unknown"}).`);
+  console.error(`Aurelia startup failed (${error instanceof Error ? error.name : "unknown"}).`);
   process.exitCode = 1;
 }

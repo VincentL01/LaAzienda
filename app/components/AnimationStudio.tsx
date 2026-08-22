@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { EmployeeSprite } from "./EmployeeSprite";
 import {
   animationStates,
@@ -56,7 +57,9 @@ export function AnimationStudio() {
     }
   }
 
-  if (!mappings.length && !error) return <main className="loading-room"><span className="pixel-loader" /> Loading animation studio…</main>;
+  if (!mappings.length) return error
+    ? <main className="loading-room"><div><b>Animation controls are locked or unavailable.</b><p role="alert">{error}</p><Link href="/training">Unlock CEO controls in the Training Room</Link></div></main>
+    : <main className="loading-room"><span className="pixel-loader" /> Loading animation studio…</main>;
 
   return (
     <main className="studio-shell">

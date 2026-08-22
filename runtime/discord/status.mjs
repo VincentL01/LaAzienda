@@ -72,7 +72,7 @@ export function formatCompanyReport(snapshot) {
   const header = [
     "**Company status**",
     `Tasks — inbox **${Number(taskCounts.queued) || 0}** · working **${Number(taskCounts.working) || 0}** · review **${Number(taskCounts.review) || 0}** · done **${Number(taskCounts.done) || 0}**`,
-    `Aurora — ${cleanInline(snapshot.integrationEmployee?.status || "unknown", 24)} / ${cleanInline(snapshot.integrationEmployee?.runtimeStatus || "unknown", 24)}`,
+    `Aurelia — ${cleanInline(snapshot.integrationEmployee?.status || "unknown", 24)} / ${cleanInline(snapshot.integrationEmployee?.runtimeStatus || "unknown", 24)}`,
   ];
   const lines = [];
   let omitted = 0;
@@ -139,6 +139,23 @@ export function isDiscordStatusSnapshot(value) {
     && value.tasks
     && Array.isArray(value.employees),
   );
+}
+
+export function isAdapterRuntimeHealthy({
+  discordReady,
+  lastStatusSuccessAt,
+  now = Date.now(),
+  maxStatusAgeMs = 15_000,
+}) {
+  const age = now - lastStatusSuccessAt;
+  return discordReady === true
+    && Number.isFinite(lastStatusSuccessAt)
+    && lastStatusSuccessAt > 0
+    && Number.isFinite(now)
+    && Number.isFinite(maxStatusAgeMs)
+    && maxStatusAgeMs > 0
+    && age >= 0
+    && age <= maxStatusAgeMs;
 }
 
 export function isAuthorizedDiscordOwner(userId, authorizingOwnerId, configuredOwnerId) {

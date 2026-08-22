@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { EmployeeInspector } from "./EmployeeInspector";
 import { LiveOffice } from "./LiveOffice";
 import {
@@ -149,7 +150,9 @@ export function CompanyDashboard() {
     done: company?.tasks.filter((task) => task.status === "done").length ?? 0,
   }), [company?.tasks]);
 
-  if (!company) return <main className="loading-room"><span className="pixel-loader" /> Waking the company...</main>;
+  if (!company) return error
+    ? <main className="loading-room"><div><b>Company records are locked or unavailable.</b><p role="alert">{error}</p><Link href="/training">Unlock CEO controls in the Training Room</Link></div></main>
+    : <main className="loading-room"><span className="pixel-loader" /> Waking the company...</main>;
 
   const taskEmployees = company.employees.filter((item) => !["read-all", "docker-provisioner"].includes(item.resourceAccess));
   const projectManagers = company.employees.filter((item) => item.roleProfileId === "project-manager");

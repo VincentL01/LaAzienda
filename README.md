@@ -7,17 +7,17 @@ This is an original implementation inspired by the operating-system ideas in [1m
 ## Working milestone
 
 - Cloudflare D1 is the source of truth for employees, system prompts, policies, skill assignments, projects, tasks, contractor handoffs, company knowledge, animation mappings, requested runtime state, observed Docker state, mail, and the activity feed.
-- Aurelia is the founding HR Manager and sole Docker provisioner, using the owner-provided Aurelia Executive character. Dorothy is the Crimson Executive secretary; Aurora is the persistent read-only communications liaison. Neither receives adapter credentials.
-- The control room has a six-zone live office. Employees move between the main office, planning room, review lab, support bay, pantry, and lobby from durable employee/run state; selecting a sprite opens the same evidence drawer Dorothy uses.
+- Aurelia is the founding HR Manager and sole Docker provisioner, using the owner-provided Aurelia Executive character. She is also the CEO-facing Discord identity, while the transport remains isolated from her privileged container. Dorothy remains the Crimson Executive read-only Secretary; Aurora is retained as an ordinary persistent Company Employee.
+- The control room has a six-zone live office. Employees move between the main office, planning room, review lab, support bay, pantry, and lobby from durable employee/run state; selecting a sprite opens the CEO evidence drawer, while Dorothy receives a fresh bounded operational snapshot with each approved inquiry.
 - `/company` shows the common Codex base image as character stats, defines Executive/Expert/Contractor roles, records planned public projects, retains company knowledge, and provides the Stalwart-backed coordination outbox.
 - `/employees` enforces role policies during onboarding. Experts receive a persistent workspace and random unreserved character; Contractors receive Solaire, a generated Medieval name, task-scoped authority, and a mandatory closeout handoff. A Codex Pet ZIP can be validated and imported without leaving the desk.
 - `/training` accepts an approved package reference or constrained `npx skills add ...` command and records reviewed skill/character cache state. Official Microsoft skill requests seed the Microsoft Expert curriculum.
-- `training-center/` provides trusted local discovery/import scripts. Imported skills are cached once, then copied into each assigned employee workspace.
+- `training-center/` provides trusted local discovery/import scripts. Imported skills are cached once, then installed into a dedicated HRM-managed volume mounted read-only at each assigned employee's workspace skill path.
 - `runtime/` provides a shared Codex base image plus an HRM extension. The loopback-only portal container starts Aurelia; Aurelia alone holds the Docker socket, reconciles every other employee container, claims durable jobs, records safe Codex JSONL events, retries transient failures, and requires structured handoffs.
 - `infrastructure/mail/` runs a pinned Stalwart service on the machine. D1 stores company addresses and delivery evidence; mailbox passwords remain in ignored local runtime state.
 - Docker observations map to employee status through replay-safe runtime event IDs. A start request never masquerades as an observed running container.
 - First-party worker exceptions and API 5xx responses are correlated only to an active employee run, redacted and deduplicated in D1, then filed and independently verified by a host-only GitHub issue watcher. Employee output cannot open issues.
-- The optional Aurora Discord adapter exposes on-demand `/company` and `/employee` reports through a dedicated read-only status credential, one user-installed Discord app, and no Docker socket, workspace, Codex auth, GitHub auth, privileged intent, or host port.
+- The optional Aurelia Discord adapter exposes on-demand `/company` and `/employee` reports from its own Docker bridge. It has no company-network route, portal address, or portal-status credential; it authenticates to a separate two-homed allowlist gateway with a distinct client capability. The gateway alone maps authenticated bodyless `GET /v1/status` to the fixed portal status request. Employees receive neither capability, neither container publishes a host port or inherits Aurelia's HRM authority, and replacements are health-checked before the verified previous container is released.
 - `/animations` maps every employee status to a Codex Pet track and frame speed.
 
 A queued task is not shown as active until Aurelia claims it and invokes `codex exec` inside the assigned employee container. Completion requires the declared output schema and moves work to CEO review; no scripted output is accepted as execution evidence. A queued company message is likewise not shown as sent until the local mail bridge reports that Stalwart accepted it.
@@ -30,18 +30,20 @@ Prerequisite: Docker Desktop. Start the complete loopback-only company with:
 .\runtime\Start-Company.ps1 -BuildImages
 ```
 
-Open `http://localhost:3002`. The portal, D1 state, Aurelia dispatcher, and approved employee containers use Docker restart policies and remain available after the script exits.
+Open `http://localhost:3002`, run `runtime/Copy-CeoTrainingCredential.ps1`, and use the local unlock credential in `/training`. The HttpOnly owner session unlocks Company, Employees, Mail, Animation, Training, and character-import controls across the same site for eight hours. The portal, D1 state, Aurelia dispatcher, and approved employee containers use Docker restart policies and remain available after the script exits.
 
-When `assets/discord/config.json` and `assets/discord/bot-token` have been imported, the same start command also runs Aurora's isolated Discord adapter. See [`runtime/discord/README.md`](runtime/discord/README.md) for the private user-install setup and secret boundary.
+When `assets/discord/config.json` and `assets/discord/bot-token` have been imported, the same start command also runs Aurelia's isolated Discord adapter. See [`runtime/discord/README.md`](runtime/discord/README.md) for the private user-install setup and secret boundary.
 
-For portal-only development on the same `http://localhost:3002` address, use Node.js 22.13 or newer:
+For UI-only development on the same `http://localhost:3002` address, use Node.js 22.13 or newer:
 
 ```bash
 npm install
 npm run dev
 ```
 
-Local development uses a project-local D1 database.
+Local development uses a project-local D1 database, but a bare `npm run dev` intentionally leaves broad company data and mutation controls locked unless the domain-separated `OWNER_SESSION_VERIFIER` is bound and its owner session is unlocked. The raw owner credential is never placed in the portal container. Runtime reports separately require `RUNTIME_BRIDGE_TOKEN`. Use `Start-Company.ps1` for a complete, usable company loop; network locality alone never grants either authority.
+
+Character import sessions expire and are reclaimed in bounded batches when another import request arrives. A scheduled maintenance trigger for cleanup during periods with no import traffic remains a future operational hardening item.
 
 Useful checks:
 
@@ -56,10 +58,10 @@ npm test
 
 1. In `/training`, discover a skill with `npx skills find <query>` and queue either its `owner/repository@skill-name` reference or exact safe `npx skills add ...` command.
 2. Review its source and run `training-center/Import-Skill.ps1` on the trusted host.
-3. Confirm the cache in the UI. Only cached skills appear in onboarding.
-4. In `/employees`, create the employee brain and assign cached skills and a cached character. You can also choose a ZIP containing root-level `pet.json` and `spritesheet.webp` or `spritesheet.png`; a successful import is selected immediately.
+3. Let Aurelia independently observe the imported whole-tree digest. Run `runtime/Copy-CeoTrainingCredential.ps1`, paste the local unlock credential into the Training Room, and approve that exact revision. This credential is an independent random secret under ignored `assets/owner/runtime/`, not the runtime bridge token or something derivable from it. The form clears it after creating an eight-hour HttpOnly session. Only a currently observed and CEO-approved digest can become a desired assignment.
+4. In `/training`, assign a cached skill to an existing employee, or select it while onboarding in `/employees`. The Training Room shows pending, verified, and failed assignment versions plus timestamps and hash evidence. You can also choose a character ZIP containing root-level `pet.json` and `spritesheet.webp` or `spritesheet.png`; a successful import is selected immediately.
 5. Request a container start, then run `runtime/Start-Company.ps1 -BuildImages` on the trusted Docker host.
-6. The host bootstraps Aurelia. HRM materializes each approved employee's `AGENTS.md`, copies only assigned skill folders, starts or stops the container, reports observed Docker state, and dispatches approved jobs.
+6. The host bootstraps Aurelia. HRM independently regenerates and repairs each employee's `AGENTS.md`, builds a whole-employee versioned manifest in an HRM-owned control volume, stops the employee, and runs a fail-atomic helper against a separate installed-skills volume. Employees mount `/workspace/.agents/skills` from that volume read-only. Success requires approved cache, staged-volume, and separate active-volume whole-tree digests to match. Revocation removes only folders named by the prior HRM-owned managed manifest; unmanaged workspace content and employee-writable evidence cannot authorize deletion or become an active Codex skill.
 
 ## Company mail loop
 
@@ -87,7 +89,7 @@ Project Manager jobs receive outbound network access inside Codex's `workspace-w
 
 `runtime/Start-Company.ps1` also starts a hidden host merge watcher. It polls only `VincentL01/LaAzienda`, verifies that the current `codex/*` pull request was merged into `main` by `VincentL01`, requires a clean working tree, then runs `git switch main` and `git pull --ff-only origin main`. After the pull it rebuilds the local company and records the synchronized PR and commit in D1 and the activity feed. Dirty, divergent, unrelated, or directly pushed branches are left untouched.
 
-Codex officially loads repository skills from `.agents/skills`; employee containers use that location after copying assignments from the Training Center cache. See [Codex skills](https://learn.chatgpt.com/docs/build-skills) and [AGENTS.md guidance](https://learn.chatgpt.com/docs/agent-configuration/agents-md).
+Codex officially loads repository skills from `.agents/skills`; employee containers see that location as a dedicated HRM-managed read-only volume after verified Training Center synchronization. If any currently assigned cache entry is missing, unsafe, colliding, or corrupt, HRM reports failure and preserves the last verified manifest and installed set rather than applying a reduced curriculum. See [Codex skills](https://learn.chatgpt.com/docs/build-skills) and [AGENTS.md guidance](https://learn.chatgpt.com/docs/agent-configuration/agents-md).
 
 ## Character packs
 
@@ -95,4 +97,4 @@ Use the onboarding ZIP picker for a package already on your computer, or `traini
 
 The owner-supplied Dorothy pack remains unchanged. Confirm each pack's creator license before public redistribution.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the state and trust contracts and [docs/REFERENCE_RESEARCH.md](docs/REFERENCE_RESEARCH.md) for the upstream onboarding and harness comparison.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the state and trust contracts, [docs/REFERENCE_RESEARCH.md](docs/REFERENCE_RESEARCH.md) for the upstream onboarding and harness comparison, and [docs/QUACKAT-INTEGRATION.md](docs/QUACKAT-INTEGRATION.md) for the boundary between the knowledge OS and this workforce control plane.

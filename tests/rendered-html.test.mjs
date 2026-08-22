@@ -35,7 +35,7 @@ test("server-renders company, employee, and Training Center shells", async () =>
   assert.equal(trainingResponse.status, 200);
   assert.match(await companyResponse.text(), /Opening the company mailroom/);
   assert.match(await employeesResponse.text(), /Opening personnel files/);
-  assert.match(await trainingResponse.text(), /Unlocking the Training Center/);
+  assert.match(await trainingResponse.text(), /Opening the Training Center/);
 });
 
 test("keeps runtime, credential, execution, and mail boundaries explicit", async () => {
@@ -93,7 +93,7 @@ test("keeps runtime, credential, execution, and mail boundaries explicit", async
   assert.match(companyLoop, /github_authentication_required/);
   assert.doesNotMatch(companyLoop, /auth\.json|github_token/);
   assert.match(runtimeBridge, /employee-hrm/);
-  assert.match(runtimeBridge, /\$runtimeVersion = "8"/);
+  assert.match(runtimeBridge, /\$runtimeVersion = "9"/);
   assert.match(runtimeBridge, /"--group-add", "0"/);
   assert.match(runtimeBridge, /Get-FileHash/);
   assert.match(hrmReconcile, /one-man-company\.auth-version/);
@@ -130,6 +130,13 @@ test("keeps runtime, credential, execution, and mail boundaries explicit", async
   assert.match(startCompany, /SOURCE_COMMIT/);
   assert.match(startCompany, /Watch-SystemIncidents\.ps1/);
   assert.match(startCompany, /discord\\Start-Discord\.ps1/);
+  assert.doesNotMatch(startCompany, /& \$discordStartPath[^\r\n]*(?:PortalUrl|ContainerControlUrl|omc-portal)/);
+  assert.match(startCompany, /\$legacyDiscordContainer = "omc-discord-aurora"[\s\S]*one-man-company\.discord-adapter[\s\S]*\$legacyDiscordLabel -ne "aurora"[\s\S]*docker container rm --force \$legacyDiscordContainer[\s\S]*if \(-not \$SkipDiscord\)/);
+  assert.match(startCompany, /employeeId[\s\S]*\$discordEmployeeId -cne "employee-hrm"[\s\S]*\$discordEmployeeId -ceq "employee-aurora"/);
+  assert.match(startCompany, /application config is missing[\s\S]*bot token is missing/);
+  assert.match(startCompany, /try \{[\s\S]*& \$discordStartPath[\s\S]*\} catch \{[\s\S]*Company startup will continue/);
+  assert.match(startCompany, /Import-DiscordCredential\.ps1 -ApplicationId "<AURELIA_APPLICATION_ID>" -FromClipboard/);
+  assert.doesNotMatch(startCompany, /Get-Content[^\n]*discordBotTokenPath|ReadAllText\(\$discordBotTokenPath/);
   assert.match(startCompany, /Start-Process[\s\S]*-WindowStyle Hidden/);
   assert.match(companyRoute, /reportRepositorySync/);
   assert.match(companyRoute, /INSERT OR IGNORE INTO repository_syncs/);

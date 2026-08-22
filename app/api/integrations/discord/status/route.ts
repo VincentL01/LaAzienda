@@ -1,12 +1,9 @@
 import { env } from "cloudflare:workers";
 import { ensureDatabase } from "@/db/ensure";
 
-const TOKEN_DOMAIN = "one-man-company:discord-status:v1\u0000";
-
 type IntegrationEnvironment = {
   DB: D1Database;
   DISCORD_STATUS_TOKEN?: string;
-  RUNTIME_BRIDGE_TOKEN?: string;
 };
 
 type StatusEmployeeRow = {
@@ -29,17 +26,10 @@ async function digest(value: string) {
   return new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
 }
 
-async function derivedStatusToken(source: string) {
-  const bytes = await digest(`${TOKEN_DOMAIN}${source}`);
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 async function configuredStatusToken() {
   const bindings = env as unknown as IntegrationEnvironment;
   const dedicated = bindings.DISCORD_STATUS_TOKEN?.trim();
-  if (dedicated && dedicated.length >= 32) return dedicated;
-  const runtimeSource = bindings.RUNTIME_BRIDGE_TOKEN?.trim();
-  return runtimeSource && runtimeSource.length >= 32 ? derivedStatusToken(runtimeSource) : null;
+  return dedicated && /^[A-Za-z0-9_-]{43,128}$/.test(dedicated) ? dedicated : null;
 }
 
 async function constantTimeEqual(left: string, right: string) {
@@ -56,7 +46,7 @@ async function authorized(request: Request) {
   if (!expected) return null;
   const header = request.headers.get("authorization") ?? "";
   const supplied = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-  return supplied.length >= 32 && await constantTimeEqual(supplied, expected);
+  return /^[A-Za-z0-9_-]{43,128}$/.test(supplied) && await constantTimeEqual(supplied, expected);
 }
 
 function noStoreJson(body: unknown, status = 200) {

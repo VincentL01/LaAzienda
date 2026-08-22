@@ -1,0 +1,143 @@
+.training-assignment-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+  padding: 18px;
+  margin-bottom: 16px;
+}
+
+.training-assignment-form label {
+  display: grid;
+  gap: 7px;
+  color: #8d8372;
+  font: 800 10px Consolas, monospace;
+  text-transform: uppercase;
+}
+
+.training-assignment-form select {
+  min-height: 42px;
+  background: #0d0b09;
+  color: #d2c5ab;
+  border: 1px solid var(--line);
+  padding: 8px;
+}
+
+.training-assignment-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.training-assignment-card {
+  border: 2px solid var(--line);
+  background: #110e0b;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  content-visibility: auto;
+}
+
+.training-assignment-card header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.training-assignment-card header div { display: grid; gap: 4px; }
+.training-assignment-card header small,
+.training-assignment-card p { color: #8d8372; margin: 0; }
+.training-assignment-card dl { display: grid; gap: 6px; margin: 0; }
+.training-assignment-card dl div { display: flex; justify-content: space-between; gap: 12px; font: 700 10px Consolas, monospace; }
+.training-assignment-card dt { color: #746b5d; }
+.training-assignment-card dd { margin: 0; color: #b8ad99; text-align: right; }
+
+.training-assignment-card code {
+  overflow-wrap: anywhere;
+  color: #8dd7a2;
+  background: #0b100c;
+  border: 1px solid #253729;
+  padding: 8px;
+  font: 700 9px Consolas, monospace;
+}
+
+.training-evidence { color: #9f9584; line-height: 1.45; }
+.training-state { display: inline-block; padding: 4px 7px; font: 900 9px Consolas, monospace; text-transform: uppercase; background: #332b24; color: #c8bdab; }
+.training-verified { background: #183020; color: #8de0a0; }
+.training-pending { background: #332918; color: #f4c95d; }
+.training-failed { background: #351a18; color: #ff8d81; }
+
+.training-history {
+  overflow: auto;
+  border: 2px solid var(--line);
+  background: #110e0b;
+}
+
+.training-history table { width: 100%; min-width: 900px; border-collapse: collapse; }
+.training-history th,
+.training-history td { padding: 11px 12px; border-bottom: 1px solid #2c2620; text-align: left; font-size: 11px; vertical-align: top; }
+.training-history th { color: #8d8372; font: 900 9px Consolas, monospace; text-transform: uppercase; }
+.training-history td:last-child { color: #9f9584; min-width: 280px; }
+
+@media (max-width: 1050px) {
+  .training-assignment-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .training-assignment-form,
+  .training-assignment-grid { grid-template-columns: 1fr; }
+}
+.cache-observed { color: #8fd4ff; background: #172c38; }
+.cache-drifted,
+.cache-failed { color: #ff9b83; background: #3a1d1a; }
+
+.owner-unlock {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 28rem) auto;
+  align-items: end;
+  gap: 1rem;
+  margin: 1rem 0;
+  padding: 1rem;
+}
+
+.owner-unlock h2,
+.owner-unlock p { margin: .25rem 0; }
+
+.owner-unlock > div,
+.owner-unlock label { min-width: 0; }
+
+.owner-unlock label {
+  display: grid;
+  gap: .45rem;
+  color: #b9ad98;
+  font: 800 10px Consolas, monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.owner-unlock input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  border: 2px solid #766d60;
+  background: #1c1814;
+  color: var(--cream);
+  padding: 11px 12px;
+  font: 700 13px/1.45 "Trebuchet MS", sans-serif;
+}
+
+.owner-unlock input::placeholder { color: #8d8372; }
+.owner-unlock label small { color: #83796a; font: 700 9px/1.4 Consolas, monospace; letter-spacing: 0; text-transform: none; }
+.owner-unlock button { min-height: 44px; }
+
+.full-digest,
+.training-history details code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+@media (max-width: 850px) {
+  .owner-unlock { grid-template-columns: 1fr; }
+  .owner-unlock button { width: 100%; }
+}

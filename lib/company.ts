@@ -3,7 +3,7 @@ export const taskStatuses = ["queued", "working", "review", "done"] as const;
 export const animationStates = ["idle", "running-right", "running-left", "waving", "jumping", "failed", "waiting", "running", "review"] as const;
 export const runtimeStatuses = ["not_provisioned", "created", "running", "paused", "restarting", "removing", "exited", "dead", "not_found"] as const;
 export const desiredRuntimeStatuses = ["running", "stopped"] as const;
-export const cacheStatuses = ["requested", "cached", "failed"] as const;
+export const cacheStatuses = ["requested", "observed", "cached", "drifted", "failed"] as const;
 export const mailboxStatuses = ["requested", "ready", "failed"] as const;
 export const mailStatuses = ["queued", "sending", "sent", "failed"] as const;
 export const employmentTypes = ["executive", "expert", "contractor"] as const;
@@ -13,6 +13,7 @@ export const petPolicies = ["fixed", "random"] as const;
 export const agentRunStatuses = ["claimed", "running", "completed", "needs_input", "failed"] as const;
 export const secretaryInquiryStatuses = ["queued", "running", "answered", "failed"] as const;
 export const systemIncidentStatuses = ["pending", "filing", "filed", "blocked"] as const;
+export const trainingSyncStatuses = ["pending", "verified", "failed"] as const;
 export const codexAuthenticationRequiredMessage = "Codex authentication needs to be refreshed by the CEO.";
 export const githubAuthenticationRequiredMessage = "GitHub authentication needs to be configured by the CEO.";
 
@@ -31,6 +32,7 @@ export type PetPolicy = (typeof petPolicies)[number];
 export type AgentRunStatus = (typeof agentRunStatuses)[number];
 export type SecretaryInquiryStatus = (typeof secretaryInquiryStatuses)[number];
 export type SystemIncidentStatus = (typeof systemIncidentStatuses)[number];
+export type TrainingSyncStatus = (typeof trainingSyncStatuses)[number];
 
 export interface Employee {
   id: string; name: string; role: string; department: string; status: EmployeeStatus;
@@ -40,7 +42,7 @@ export interface Employee {
   mailboxStatus: MailboxStatus; systemPrompt: string; containerName: string | null;
   desiredRuntimeStatus: DesiredRuntimeStatus; runtimeStatus: RuntimeStatus;
   lastRuntimeAt: string | null; currentTaskId: string | null; createdAt: string;
-  skills: TrainingSkill[];
+  skills: TrainingSkill[]; desiredSkills: DesiredEmployeeSkill[];
 }
 
 export interface CompanyRole {
@@ -67,7 +69,35 @@ export interface MailMessage {
 export interface TrainingSkill {
   id: string; packageRef: string; name: string; description: string;
   sourceUrl: string | null; installCommand: string; cacheStatus: CacheStatus;
-  createdAt: string; cachedAt: string | null;
+  folderKey: string | null; observedDigest: string | null; observedAt: string | null;
+  observationStatus: "observed" | "missing" | "failed" | null; observationEvidence: string | null;
+  approvedDigest: string | null; approvalVersion: number; approvedAt: string | null;
+  createdAt: string; cachedAt: string | null; updatedAt: string;
+}
+
+export interface DesiredEmployeeSkill extends TrainingSkill {
+  assignmentVersion: number; assignedAt: string; desiredUpdatedAt: string; folderKey: string;
+}
+
+export interface TrainingEmployee {
+  id: string; name: string; role: string; department: string;
+}
+
+export interface TrainingAssignment {
+  employeeId: string; employeeName: string; skillId: string; skillName: string;
+  packageRef: string; folderKey: string; assignedAt: string; desiredUpdatedAt: string; desiredOperation: "install" | "remove";
+  assignmentVersion: number; status: TrainingSyncStatus;
+  manifestVersion: string | null; sourceHash: string | null; stagedHash: string | null; verifiedHash: string | null;
+  attempts: number; evidence: string; verifiedAt: string | null; lastAttemptAt: string | null;
+}
+
+export interface TrainingSyncEvent {
+  id: number; eventKey: string; employeeId: string; employeeName: string;
+  skillId: string; skillName: string; operation: "install" | "remove";
+  assignmentVersion: number; status: Exclude<TrainingSyncStatus, "pending">;
+  manifestVersion: string | null; sourceHash: string | null; stagedHash: string | null; verifiedHash: string | null;
+  evidence: string; workerId: string; attempts: number; verifiedAt: string | null;
+  createdAt: string; updatedAt: string;
 }
 
 export interface CharacterPack {
@@ -106,8 +136,10 @@ export interface MailroomState {
 }
 
 export interface TrainingCenterState {
-  skills: TrainingSkill[]; characters: CharacterPack[];
-  discoveryCommand: string; petCatalogUrl: string;
+  skills: TrainingSkill[]; characters: CharacterPack[]; employees: TrainingEmployee[];
+  assignments: TrainingAssignment[]; history: TrainingSyncEvent[];
+  discoveryCommand: string; petCatalogUrl: string; ownerAuthorized: boolean;
+  desiredGeneration: number;
 }
 
 export interface CompanyTask {

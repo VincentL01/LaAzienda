@@ -3,9 +3,8 @@ param(
   [Parameter(Mandatory)]
   [ValidatePattern('^\d{17,20}$')]
   [string]$ApplicationId,
-  [Parameter(Mandatory)]
   [ValidatePattern('^employee-[A-Za-z0-9-]{1,100}$')]
-  [string]$EmployeeId,
+  [string]$EmployeeId = "employee-hrm",
   [switch]$FromClipboard
 )
 
@@ -29,10 +28,11 @@ $token = $null
 $secureToken = $null
 $bstr = [IntPtr]::Zero
 try {
+  if ($EmployeeId -cne "employee-hrm") { throw "The Aurelia Discord adapter must be bound to employee-hrm." }
   if ($FromClipboard) {
     $token = [string](Get-Clipboard -Raw)
   } else {
-    $secureToken = Read-Host "Paste the Aurora bot token" -AsSecureString
+    $secureToken = Read-Host "Paste the Aurelia bot token" -AsSecureString
     $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureToken)
     $token = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
   }
@@ -41,7 +41,7 @@ try {
 
   try {
     $application = Invoke-RestMethod -Uri "https://discord.com/api/v10/oauth2/applications/@me" `
-      -Headers @{ Authorization = "Bot $token"; "User-Agent" = "LaAzienda-Aurora/0.1" } `
+      -Headers @{ Authorization = "Bot $token"; "User-Agent" = "LaAzienda-Aurelia/0.1" } `
       -Method Get -TimeoutSec 15
   } catch {
     throw "Discord did not accept the copied bot credential."
@@ -49,7 +49,7 @@ try {
   if ([string]$application.id -ne $ApplicationId -or [string]$application.owner.id -notmatch '^\d{17,20}$') {
     throw "The copied credential does not belong to the configured CEO-owned application."
   }
-  if ([string]$application.name -cne "Aurora") { throw "The Discord application must be named exactly Aurora." }
+  if ([string]$application.name -cne "Aurelia") { throw "The Discord application must be named exactly Aurelia." }
 
   New-Item -ItemType Directory -Force -Path $credentialRoot | Out-Null
   $utf8NoBom = [Text.UTF8Encoding]::new($false)
@@ -66,4 +66,4 @@ try {
   }
 }
 
-Write-Output "Aurora Discord configuration was imported into ignored local files."
+Write-Output "Aurelia Discord configuration was imported into ignored local files."

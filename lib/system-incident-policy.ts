@@ -2,6 +2,12 @@ export const systemIncidentCategories = ["api_5xx", "worker_exception"] as const
 
 export type SystemIncidentCategory = (typeof systemIncidentCategories)[number];
 
+export type IncidentRequestContext = {
+  method: string;
+  pathname: string;
+  runId: string | null;
+};
+
 const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
 const COMPANY_ID_PATTERN = /\b(?:run|task|inquiry|employee)-[A-Za-z0-9._-]{6,}\b/gi;
 const GITHUB_TOKEN_PATTERN = /\b(?:gh[pousr]_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{10,})\b/gi;
@@ -85,4 +91,21 @@ export function isReportablePortalResponse(pathname: string, status: number) {
     && route !== "/api/system-incidents"
     && status >= 500
     && status <= 599;
+}
+
+export function incidentRequestContext(request: Request, configuredBridgeToken?: string): IncidentRequestContext {
+  const url = new URL(request.url);
+  const bridgeAuthorized = Boolean(
+    configuredBridgeToken
+    && request.headers.get("x-runtime-bridge-token") === configuredBridgeToken,
+  );
+  const requestedRunId = bridgeAuthorized && url.pathname === "/api/executor" && request.method === "POST"
+    ? request.headers.get("x-company-run-id")
+    : null;
+
+  return {
+    method: request.method,
+    pathname: url.pathname,
+    runId: requestedRunId && /^[A-Za-z0-9._-]{8,120}$/.test(requestedRunId) ? requestedRunId : null,
+  };
 }

@@ -114,7 +114,11 @@ export function EmployeeInspector({ employee, company, onClose }: EmployeeInspec
       <section className="inspector-section inspector-authority">
         <span className="eyebrow">AUTHORITY & TRAINING</span>
         <p>{employee.resourceAccess} / {employee.workspacePolicy} workspace / {employee.employmentType}</p>
-        <div>{employee.skills.length ? employee.skills.map((skill) => <span key={skill.id}>{skill.name}</span>) : <span>Base image only</span>}</div>
+        <div>
+          {employee.skills.length ? employee.skills.map((skill) => <span key={skill.id}>Verified · {skill.name}</span>) : <span>No verified skills</span>}
+          {employee.desiredSkills.filter((desiredSkill) => !employee.skills.some((verifiedSkill) => verifiedSkill.id === desiredSkill.id))
+            .map((skill) => <span key={`pending:${skill.id}`}>Pending · {skill.name}</span>)}
+        </div>
       </section>
 
       <footer>Dorothy reads this same D1-backed run evidence when preparing a CEO briefing.</footer>

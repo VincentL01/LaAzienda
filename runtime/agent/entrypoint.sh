@@ -20,13 +20,4 @@ if [ -f /run/company-secrets/mail_password ]; then
   export OMC_MAIL_PASSWORD
 fi
 
-if [ -d /opt/assigned-skills ]; then
-  for skill_dir in /opt/assigned-skills/*; do
-    [ -d "$skill_dir" ] || continue
-    skill_name="$(basename "$skill_dir")"
-    rm -rf "/workspace/.agents/skills/$skill_name"
-    cp -R "$skill_dir" "/workspace/.agents/skills/$skill_name"
-  done
-fi
-
 exec "$@"

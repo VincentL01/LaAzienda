@@ -1,14 +1,13 @@
 import vinext from "vinext";
 import { defineConfig } from "vite";
 import hostingConfig from "./.openai/hosting.json";
+import { buildLocalBindingVars } from "./lib/local-binding-vars";
 import { sites } from "./build/sites-vite-plugin";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
 
 const { d1, r2 } = hostingConfig;
-const runtimeBridgeToken = process.env.RUNTIME_BRIDGE_TOKEN;
-const sourceCommit = process.env.SOURCE_COMMIT;
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
@@ -16,10 +15,7 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
-  vars: {
-    ...(runtimeBridgeToken ? { RUNTIME_BRIDGE_TOKEN: runtimeBridgeToken } : {}),
-    ...(sourceCommit ? { SOURCE_COMMIT: sourceCommit } : {}),
-  },
+  vars: buildLocalBindingVars(process.env),
   d1_databases: d1
     ? [
         {

@@ -2,14 +2,22 @@ import { env } from "cloudflare:workers";
 import { ensureDatabase } from "@/db/ensure";
 import { mailboxStatuses, mailStatuses, type MailboxStatus, type MailStatus } from "@/lib/company";
 import { bridgeAuthorized } from "@/lib/server/bridge-auth";
+import { readBoundedJsonObject } from "@/lib/server/bounded-json";
+import { requiredControlPrincipal } from "@/lib/server/control-access";
 import { readMailroom } from "@/lib/server/mailroom";
+import { ownerAuthorized } from "@/lib/server/owner-auth";
+
+const mailBodyLimit = 16 * 1024;
+const ownerUnlockMessage = "Unlock CEO controls in the Training Room before accessing company mail.";
 
 function cleanText(value: unknown, max: number) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const authorized = bridgeAuthorized(request) || await ownerAuthorized(request);
+    if (!authorized) return Response.json({ error: ownerUnlockMessage }, { status: 403 });
     await ensureDatabase();
     return Response.json(await readMailroom());
   } catch (error) {
@@ -19,8 +27,23 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const bridgeIsAuthorized = bridgeAuthorized(request);
+    const ownerIsAuthorized = await ownerAuthorized(request);
+    if (!bridgeIsAuthorized && !ownerIsAuthorized) {
+      return Response.json({ error: ownerUnlockMessage }, { status: 403 });
+    }
+    const parsed = await readBoundedJsonObject(request, mailBodyLimit);
+    if (!parsed.ok) return Response.json({ error: parsed.error }, { status: parsed.status });
+    const body = parsed.value;
+    const requiredPrincipal = requiredControlPrincipal("mail", body.action);
+    if (!requiredPrincipal) return Response.json({ error: "Unknown mailroom action" }, { status: 400 });
+    if (requiredPrincipal === "owner" && !ownerIsAuthorized) {
+      return Response.json({ error: ownerUnlockMessage }, { status: 403 });
+    }
+    if (requiredPrincipal === "bridge" && !bridgeIsAuthorized) {
+      return Response.json({ error: "Mail bridge authorization failed" }, { status: 403 });
+    }
     await ensureDatabase();
-    const body = (await request.json()) as Record<string, unknown>;
     const d1 = env.DB;
 
     if (body.action === "queueMail") {
@@ -54,7 +77,6 @@ export async function POST(request: Request) {
           .bind(`Dorothy queued “${subject}” for ${recipient.name} through the local mailroom.`).run();
       }
     } else if (body.action === "reportDelivery") {
-      if (!bridgeAuthorized(request)) return Response.json({ error: "Mail bridge authorization failed" }, { status: 403 });
       const messageKey = cleanText(body.messageKey, 160);
       const status = String(body.status) as MailStatus;
       const lastError = cleanText(body.lastError, 1000) || null;
@@ -83,7 +105,6 @@ export async function POST(request: Request) {
         ]);
       }
     } else if (body.action === "reportMailbox") {
-      if (!bridgeAuthorized(request)) return Response.json({ error: "Mail bridge authorization failed" }, { status: 403 });
       const employeeId = cleanText(body.employeeId, 80);
       const status = String(body.status) as MailboxStatus;
       if (!employeeId || !mailboxStatuses.includes(status)) return Response.json({ error: "A valid mailbox report is required" }, { status: 400 });

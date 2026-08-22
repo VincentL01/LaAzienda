@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const employees = sqliteTable(
   "employees",
@@ -155,24 +155,108 @@ export const trainingCenterSkills = sqliteTable(
     description: text("description").notNull().default(""),
     sourceUrl: text("source_url"),
     installCommand: text("install_command").notNull(),
+    folderKey: text("folder_key"),
     cacheStatus: text("cache_status").notNull().default("requested"),
+    observedDigest: text("observed_digest"),
+    observedAt: text("observed_at"),
+    observationStatus: text("observation_status"),
+    observationEvidence: text("observation_evidence"),
+    approvedDigest: text("approved_digest"),
+    approvalVersion: integer("approval_version").notNull().default(0),
+    approvedAt: text("approved_at"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     cachedAt: text("cached_at"),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
-  (table) => [uniqueIndex("idx_training_skills_package_ref").on(table.packageRef)],
+  (table) => [
+    uniqueIndex("idx_training_skills_package_ref").on(table.packageRef),
+    uniqueIndex("idx_training_skills_folder").on(sql`${table.folderKey} COLLATE NOCASE`).where(sql`${table.folderKey} IS NOT NULL`),
+  ],
 );
+
+// Monotonic control-plane generations bind a reconciled HRM snapshot to the
+// executor claim CAS. A desired training or cache-readiness transition bumps
+// this row in the same D1 batch; a stale reconciler therefore cannot claim.
+export const controlGenerations = sqliteTable("control_generations", {
+  controlKey: text("control_key").primaryKey(),
+  generation: integer("generation").notNull().default(1),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
 
 export const employeeSkills = sqliteTable(
   "employee_skills",
   {
     employeeId: text("employee_id").notNull(),
     skillId: text("skill_id").notNull(),
+    folderKey: text("folder_key").notNull(),
+    desiredState: text("desired_state").notNull().default("assigned"),
+    assignmentVersion: integer("assignment_version").notNull().default(1),
     assignedAt: text("assigned_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     primaryKey({ columns: [table.employeeId, table.skillId] }),
+    uniqueIndex("idx_employee_skills_employee_folder").on(table.employeeId, sql`${table.folderKey} COLLATE NOCASE`),
     index("idx_employee_skills_skill").on(table.skillId),
+  ],
+);
+
+export const trainingSyncHistory = sqliteTable(
+  "training_sync_history",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    eventKey: text("event_key").notNull(),
+    employeeId: text("employee_id").notNull(),
+    skillId: text("skill_id").notNull(),
+    operation: text("operation").notNull().default("install"),
+    assignmentVersion: integer("assignment_version").notNull().default(1),
+    status: text("status").notNull().default("failed"),
+    manifestVersion: text("manifest_version"),
+    sourceHash: text("source_hash"),
+    stagedHash: text("staged_hash"),
+    verifiedHash: text("verified_hash"),
+    evidence: text("evidence").notNull().default(""),
+    workerId: text("worker_id").notNull(),
+    attempts: integer("attempts").notNull().default(1),
+    verifiedAt: text("verified_at"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("idx_training_sync_event_key").on(table.eventKey),
+    index("idx_training_sync_employee_skill").on(table.employeeId, table.skillId, table.updatedAt),
+    index("idx_training_sync_status_updated").on(table.status, table.updatedAt),
+  ],
+);
+
+export const trainingSyncObservations = sqliteTable(
+  "training_sync_observations",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    historyId: integer("history_id").notNull(),
+    previousObservationId: integer("previous_observation_id").notNull().default(0),
+    employeeId: text("employee_id").notNull(),
+    skillId: text("skill_id").notNull(),
+    operation: text("operation").notNull(),
+    assignmentVersion: integer("assignment_version").notNull(),
+    status: text("status").notNull(),
+    manifestVersion: text("manifest_version"),
+    sourceHash: text("source_hash"),
+    stagedHash: text("staged_hash"),
+    verifiedHash: text("verified_hash"),
+    evidence: text("evidence").notNull().default(""),
+    workerId: text("worker_id").notNull(),
+    attempt: integer("attempt").notNull().default(1),
+    observedAt: text("observed_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("idx_training_observation_predecessor").on(
+      table.employeeId, table.skillId, table.operation, table.assignmentVersion, table.previousObservationId,
+    ),
+    index("idx_training_observation_assignment").on(
+      table.employeeId, table.skillId, table.operation, table.assignmentVersion, table.id,
+    ),
+    index("idx_training_observation_history").on(table.historyId, table.id),
   ],
 );
 
@@ -192,6 +276,47 @@ export const characterPacks = sqliteTable(
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [index("idx_character_packs_cache_status").on(table.cacheStatus)],
+);
+
+export const characterUploadSessions = sqliteTable(
+  "character_upload_sessions",
+  {
+    sessionId: text("session_id").primaryKey(),
+    status: text("status").notNull().default("uploading"),
+    originalFilename: text("original_filename"),
+    totalChunks: integer("total_chunks"),
+    expectedSize: integer("expected_size"),
+    importedCharacterId: text("imported_character_id"),
+    pendingKeyRoot: text("pending_key_root"),
+    pendingArchiveDigest: text("pending_archive_digest"),
+    pendingSpriteKey: text("pending_sprite_key"),
+    cleanupClaimedAt: text("cleanup_claimed_at"),
+    expiresAt: text("expires_at").notNull(),
+    completedAt: text("completed_at"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("idx_character_upload_sessions_expiry").on(table.expiresAt, table.status),
+    check("character_upload_sessions_status_check", sql`${table.status} IN ('uploading', 'completed')`),
+    check("character_upload_sessions_completion_check", sql`
+      ${table.status} = 'uploading' OR (
+        ${table.importedCharacterId} IS NOT NULL AND ${table.originalFilename} IS NOT NULL
+        AND ${table.totalChunks} IS NOT NULL AND ${table.expectedSize} IS NOT NULL
+        AND ${table.completedAt} IS NOT NULL
+      )`),
+  ],
+);
+
+export const ownerSessions = sqliteTable(
+  "owner_sessions",
+  {
+    tokenHash: text("token_hash").primaryKey(),
+    ownerVerifier: text("owner_verifier").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [index("idx_owner_sessions_expiry").on(table.expiresAt)],
 );
 
 export const runtimeEvents = sqliteTable(

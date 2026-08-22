@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./training-records.css";
 
 :root{--ink:#17130f;--cream:#fff4d6;--paper:#f5e8c6;--coral:#ff6b4a;--pink:#f49cba;--amber:#f2b84b;--teal:#4e8f7c;--line:#3c3329;--shadow:6px 6px 0 #0b0907}*{box-sizing:border-box}html{background:var(--ink)}body{margin:0;color:var(--cream);background:linear-gradient(#ffffff05 1px,transparent 1px),linear-gradient(90deg,#ffffff05 1px,transparent 1px),var(--ink);background-size:24px 24px;font-family:"Trebuchet MS","Arial Narrow",Arial,sans-serif;min-height:100vh}button,input,select{font:inherit}button,a,select{-webkit-tap-highlight-color:transparent}button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid var(--amber);outline-offset:3px}.sr-only,.command-form>label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 

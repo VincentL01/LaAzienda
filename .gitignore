@@ -46,6 +46,8 @@ yarn-error.log*
 # Local agent credentials and runtime material
 /assets/agent_auth/auth.json
 /assets/github_auth/token
+/assets/discord/bot-token
+/assets/discord/config.json
 /training-center/cache/
 /training-center/work/
 /runtime/state/

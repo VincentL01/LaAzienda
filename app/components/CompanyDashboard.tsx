@@ -160,6 +160,7 @@ export function CompanyDashboard() {
       && company.runs.find((run) => run.jobType === "secretary-inquiry" && run.jobId === inquiry.id)?.error === codexAuthenticationRequiredMessage);
   const githubAuthenticationBlocked = company.tasks.some((task) => task.status === "review"
     && company.runs.find((run) => run.taskId === task.id)?.error === githubAuthenticationRequiredMessage);
+  const unresolvedSystemIncident = company.systemIncidents.find((incident) => ["pending", "filing", "blocked"].includes(incident.status));
   const latestRepositorySync = company.repositorySyncs[0] ?? null;
 
   return (
@@ -223,12 +224,18 @@ export function CompanyDashboard() {
         <p>Run <code>runtime/Import-GitHubCredential.ps1</code> on the host. It securely imports the existing VincentL01 Git Credential Manager identity, refreshes only the Project Manager credential boundary, and never exposes the credential in the portal.</p>
       </section> : null}
 
+      {unresolvedSystemIncident ? <section className="company-alert" role="status">
+        <b>Company Portal incident {unresolvedSystemIncident.status}</b>
+        <p>{unresolvedSystemIncident.summary} Select {company.employees.find((employee) => employee.id === unresolvedSystemIncident.employeeId)?.name ?? "the linked employee"} to inspect the run evidence{unresolvedSystemIncident.lastFilingError ? ` and retry status: ${unresolvedSystemIncident.lastFilingError}` : unresolvedSystemIncident.status === "blocked" ? " and the recorded filing blocker" : " while the host files and verifies the GitHub issue"}.</p>
+      </section> : null}
+
       <section className="workspace-grid">
         <div className="office-panel panel">
-          <div className="panel-heading"><div><span className="eyebrow">LIVE FLOOR</span><h2>The company campus</h2></div><span className="live-chip"><i /> D1 live</span></div>
+          <div className="panel-heading"><div><span className="eyebrow">LIVE FLOOR</span><h2>The company campus</h2></div><div className="office-heading-actions"><span className="live-chip"><i /> D1 live</span><small>Select an employee to inspect the live job, heartbeat, and execution trace.</small></div></div>
           <LiveOffice
             employees={company.employees}
             tasks={company.tasks}
+            runs={company.runs}
             mappings={company.mappings}
             selectedEmployeeId={selectedEmployeeId}
             onSelectEmployee={setSelectedEmployeeId}

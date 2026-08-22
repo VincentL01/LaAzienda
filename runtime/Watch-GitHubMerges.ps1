@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [string]$RepositoryRoot = "",
-  [string]$ControlUrl = "http://127.0.0.1:3000",
+  [string]$ControlUrl = "http://127.0.0.1:3002",
   [int]$PollSeconds = 30,
   [switch]$Once,
   [switch]$SkipCompanyRefresh

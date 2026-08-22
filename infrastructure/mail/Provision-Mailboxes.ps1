@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [string]$ControlUrl = "http://localhost:3000",
+  [string]$ControlUrl = "http://localhost:3002",
   [string]$BridgeToken = $env:OMC_RUNTIME_BRIDGE_TOKEN
 )
 

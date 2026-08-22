@@ -17,7 +17,7 @@ import { findActiveTaskConflict, type ActiveTaskIdentity } from "@/lib/task-poli
 
 async function readCompany(): Promise<CompanyState> {
   const d1 = env.DB;
-  const [employees, tasks, mappings, activity, assignedSkills, projects, knowledge, handoffs, runs, runEvents, secretaryInquiries, repositorySyncs] = await Promise.all([
+  const [employees, tasks, mappings, activity, assignedSkills, projects, knowledge, handoffs, runs, runEvents, secretaryInquiries, repositorySyncs, systemIncidents] = await Promise.all([
     d1.prepare(`SELECT employees.id, employees.name, role, department, status, pet_id AS petId,
       character_packs.spritesheet_path AS spritesheetPath,
       role_profile_id AS roleProfileId, employment_type AS employmentType,
@@ -29,7 +29,7 @@ async function readCompany(): Promise<CompanyState> {
       last_runtime_at AS lastRuntimeAt, current_task_id AS currentTaskId,
       employees.created_at AS createdAt FROM employees
       LEFT JOIN character_packs ON character_packs.id = employees.pet_id
-      ORDER BY CASE employees.id WHEN 'employee-hrm' THEN 0 WHEN 'employee-dorothy' THEN 1 ELSE 2 END, employees.created_at`).all(),
+      ORDER BY CASE employees.id WHEN 'employee-hrm' THEN 0 WHEN 'employee-dorothy' THEN 1 WHEN 'employee-aurora' THEN 2 ELSE 3 END, employees.created_at`).all(),
     d1.prepare(`SELECT id, title, brief, status, priority, assignee_id AS assigneeId,
       project_id AS projectId, handoff_required AS handoffRequired,
       created_at AS createdAt, updated_at AS updatedAt
@@ -70,6 +70,14 @@ async function readCompany(): Promise<CompanyState> {
     d1.prepare(`SELECT id, repository, branch, source_branch AS sourceBranch,
       commit_sha AS commitSha, pull_number AS pullNumber, synced_at AS syncedAt
       FROM repository_syncs ORDER BY synced_at DESC, id DESC LIMIT 20`).all(),
+    d1.prepare(`SELECT id, fingerprint, category, source, route, method,
+      http_status AS httpStatus, summary, evidence, run_id AS runId,
+      employee_id AS employeeId, task_id AS taskId, build_commit AS buildCommit,
+      occurrence_count AS occurrenceCount, status, issue_number AS issueNumber,
+      issue_url AS issueUrl, filing_attempts AS filingAttempts,
+      next_attempt_at AS nextAttemptAt, last_filing_error AS lastFilingError,
+      first_seen_at AS firstSeenAt, last_seen_at AS lastSeenAt
+      FROM system_incidents ORDER BY last_seen_at DESC, id DESC LIMIT 60`).all(),
   ]);
 
   const employeeRows = employees.results.map((row) => {
@@ -108,6 +116,7 @@ async function readCompany(): Promise<CompanyState> {
     runEvents: runEvents.results as unknown as CompanyState["runEvents"],
     secretaryInquiries: secretaryInquiries.results as unknown as CompanyState["secretaryInquiries"],
     repositorySyncs: repositorySyncs.results as unknown as CompanyState["repositorySyncs"],
+    systemIncidents: systemIncidents.results as unknown as CompanyState["systemIncidents"],
   };
 }
 

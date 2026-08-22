@@ -8,6 +8,7 @@ const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
 
 const { d1, r2 } = hostingConfig;
 const runtimeBridgeToken = process.env.RUNTIME_BRIDGE_TOKEN;
+const sourceCommit = process.env.SOURCE_COMMIT;
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
@@ -15,9 +16,10 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
-  vars: runtimeBridgeToken
-    ? { RUNTIME_BRIDGE_TOKEN: runtimeBridgeToken }
-    : {},
+  vars: {
+    ...(runtimeBridgeToken ? { RUNTIME_BRIDGE_TOKEN: runtimeBridgeToken } : {}),
+    ...(sourceCommit ? { SOURCE_COMMIT: sourceCommit } : {}),
+  },
   d1_databases: d1
     ? [
         {
@@ -50,6 +52,8 @@ export default defineConfig(async () => {
   return {
     server: {
       allowedHosts: ["omc-portal"],
+      port: Number(process.env.PORT ?? 3002),
+      strictPort: true,
       ...(isCodexSeatbeltSandbox
         ? { watch: { useFsEvents: false, usePolling: true } }
         : {}),

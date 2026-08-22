@@ -228,6 +228,43 @@ export const repositorySyncs = sqliteTable(
   ],
 );
 
+export const systemIncidents = sqliteTable(
+  "system_incidents",
+  {
+    id: text("id").primaryKey(),
+    fingerprint: text("fingerprint").notNull(),
+    category: text("category").notNull(),
+    source: text("source").notNull(),
+    route: text("route").notNull(),
+    method: text("method").notNull(),
+    httpStatus: integer("http_status"),
+    summary: text("summary").notNull(),
+    evidence: text("evidence").notNull().default(""),
+    runId: text("run_id").notNull(),
+    employeeId: text("employee_id").notNull(),
+    taskId: text("task_id"),
+    buildCommit: text("build_commit"),
+    occurrenceCount: integer("occurrence_count").notNull().default(1),
+    status: text("status").notNull().default("pending"),
+    issueNumber: integer("issue_number"),
+    issueUrl: text("issue_url"),
+    filingAttempts: integer("filing_attempts").notNull().default(0),
+    nextAttemptAt: text("next_attempt_at"),
+    leaseOwner: text("lease_owner"),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: text("lease_expires_at"),
+    lastFilingError: text("last_filing_error"),
+    firstSeenAt: text("first_seen_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    lastSeenAt: text("last_seen_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("idx_system_incidents_fingerprint").on(table.fingerprint),
+    index("idx_system_incidents_delivery").on(table.status, table.nextAttemptAt),
+    index("idx_system_incidents_employee_seen").on(table.employeeId, table.lastSeenAt),
+    index("idx_system_incidents_run_seen").on(table.runId, table.lastSeenAt),
+  ],
+);
+
 export const tasks = sqliteTable(
   "tasks",
   {

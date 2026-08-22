@@ -12,6 +12,7 @@ export const resourceAccessPolicies = ["read-all", "docker-provisioner", "projec
 export const petPolicies = ["fixed", "random"] as const;
 export const agentRunStatuses = ["claimed", "running", "completed", "needs_input", "failed"] as const;
 export const secretaryInquiryStatuses = ["queued", "running", "answered", "failed"] as const;
+export const systemIncidentStatuses = ["pending", "filing", "filed", "blocked"] as const;
 export const codexAuthenticationRequiredMessage = "Codex authentication needs to be refreshed by the CEO.";
 export const githubAuthenticationRequiredMessage = "GitHub authentication needs to be configured by the CEO.";
 
@@ -29,6 +30,7 @@ export type ResourceAccessPolicy = (typeof resourceAccessPolicies)[number];
 export type PetPolicy = (typeof petPolicies)[number];
 export type AgentRunStatus = (typeof agentRunStatuses)[number];
 export type SecretaryInquiryStatus = (typeof secretaryInquiryStatuses)[number];
+export type SystemIncidentStatus = (typeof systemIncidentStatuses)[number];
 
 export interface Employee {
   id: string; name: string; role: string; department: string; status: EmployeeStatus;
@@ -82,6 +84,15 @@ export interface RuntimeEvent {
 export interface RepositorySync {
   id: string; repository: string; branch: "main"; sourceBranch: string;
   commitSha: string; pullNumber: number | null; syncedAt: string;
+}
+
+export interface SystemIncident {
+  id: string; fingerprint: string; category: "api_5xx" | "worker_exception"; source: "worker";
+  route: string; method: string; httpStatus: number | null; summary: string; evidence: string;
+  runId: string; employeeId: string; taskId: string | null; buildCommit: string | null;
+  occurrenceCount: number; status: SystemIncidentStatus; issueNumber: number | null; issueUrl: string | null;
+  filingAttempts: number; nextAttemptAt: string | null; lastFilingError: string | null;
+  firstSeenAt: string; lastSeenAt: string;
 }
 
 export interface WorkforceState {
@@ -157,7 +168,7 @@ export interface CompanyState {
   employees: Employee[]; tasks: CompanyTask[]; mappings: AnimationMapping[]; activity: ActivityItem[];
   projects: CompanyProject[]; knowledge: KnowledgeEntry[]; handoffs: ContractorHandoff[];
   runs: AgentRun[]; runEvents: AgentRunEvent[]; secretaryInquiries: SecretaryInquiry[];
-  repositorySyncs: RepositorySync[];
+  repositorySyncs: RepositorySync[]; systemIncidents: SystemIncident[];
 }
 
 export const spriteTracks: Record<AnimationState, { row: number; frames: number; label: string }> = {

@@ -7,7 +7,7 @@ This is an original implementation inspired by the operating-system ideas in [1m
 ## Working milestone
 
 - Cloudflare D1 is the source of truth for employees, system prompts, policies, skill assignments, projects, tasks, contractor handoffs, company knowledge, animation mappings, requested runtime state, observed Docker state, mail, and the activity feed.
-- Aurelia is the founding HR Manager and sole Docker provisioner, using the owner-provided Aurelia Executive character. Dorothy is the Crimson Executive secretary and has company-wide read-only access.
+- Aurelia is the founding HR Manager and sole Docker provisioner, using the owner-provided Aurelia Executive character. Dorothy is the Crimson Executive secretary; Aurora is the persistent read-only communications liaison. Neither receives adapter credentials.
 - The control room has a six-zone live office. Employees move between the main office, planning room, review lab, support bay, pantry, and lobby from durable employee/run state; selecting a sprite opens the same evidence drawer Dorothy uses.
 - `/company` shows the common Codex base image as character stats, defines Executive/Expert/Contractor roles, records planned public projects, retains company knowledge, and provides the Stalwart-backed coordination outbox.
 - `/employees` enforces role policies during onboarding. Experts receive a persistent workspace and random unreserved character; Contractors receive Solaire, a generated Medieval name, task-scoped authority, and a mandatory closeout handoff. A Codex Pet ZIP can be validated and imported without leaving the desk.
@@ -16,6 +16,8 @@ This is an original implementation inspired by the operating-system ideas in [1m
 - `runtime/` provides a shared Codex base image plus an HRM extension. The loopback-only portal container starts Aurelia; Aurelia alone holds the Docker socket, reconciles every other employee container, claims durable jobs, records safe Codex JSONL events, retries transient failures, and requires structured handoffs.
 - `infrastructure/mail/` runs a pinned Stalwart service on the machine. D1 stores company addresses and delivery evidence; mailbox passwords remain in ignored local runtime state.
 - Docker observations map to employee status through replay-safe runtime event IDs. A start request never masquerades as an observed running container.
+- First-party worker exceptions and API 5xx responses are correlated only to an active employee run, redacted and deduplicated in D1, then filed and independently verified by a host-only GitHub issue watcher. Employee output cannot open issues.
+- The optional Aurora Discord adapter exposes on-demand `/company` and `/employee` reports through a dedicated read-only status credential, one user-installed Discord app, and no Docker socket, workspace, Codex auth, GitHub auth, privileged intent, or host port.
 - `/animations` maps every employee status to a Codex Pet track and frame speed.
 
 A queued task is not shown as active until Aurelia claims it and invokes `codex exec` inside the assigned employee container. Completion requires the declared output schema and moves work to CEO review; no scripted output is accepted as execution evidence. A queued company message is likewise not shown as sent until the local mail bridge reports that Stalwart accepted it.
@@ -28,9 +30,11 @@ Prerequisite: Docker Desktop. Start the complete loopback-only company with:
 .\runtime\Start-Company.ps1 -BuildImages
 ```
 
-Open `http://localhost:3000`. The portal, D1 state, Aurelia dispatcher, and approved employee containers use Docker restart policies and remain available after the script exits.
+Open `http://localhost:3002`. The portal, D1 state, Aurelia dispatcher, and approved employee containers use Docker restart policies and remain available after the script exits.
 
-For portal-only development, use Node.js 22.13 or newer:
+When `assets/discord/config.json` and `assets/discord/bot-token` have been imported, the same start command also runs Aurora's isolated Discord adapter. See [`runtime/discord/README.md`](runtime/discord/README.md) for the private user-install setup and secret boundary.
+
+For portal-only development on the same `http://localhost:3002` address, use Node.js 22.13 or newer:
 
 ```bash
 npm install

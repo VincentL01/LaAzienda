@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-control_url="${OMC_CONTROL_URL:-http://host.docker.internal:3000}"
+control_url="${OMC_CONTROL_URL:-http://host.docker.internal:3002}"
 worker_id="${OMC_WORKER_ID:-omc-hrm}"
 idle_seconds="${OMC_LOOP_SECONDS:-5}"
 heartbeat_seconds="${OMC_HEARTBEAT_SECONDS:-10}"

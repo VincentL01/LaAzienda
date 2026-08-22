@@ -39,7 +39,7 @@ test("server-renders company, employee, and Training Center shells", async () =>
 });
 
 test("keeps runtime, credential, execution, and mail boundaries explicit", async () => {
-  const [page, layout, dashboard, packageJson, hosting, gitignore, dockerfile, taskRunner, hrmDockerfile, hrmReconcile, companyLoop, runtimeBridge, githubCredentialImport, githubMergeWatcher, startCompany, viteConfig, companyRoute, executorRoute, mailCompose, mailBridge] = await Promise.all([
+  const [page, layout, dashboard, packageJson, hosting, gitignore, dockerfile, taskRunner, hrmDockerfile, hrmReconcile, companyLoop, runtimeBridge, githubCredentialImport, githubMergeWatcher, systemIncidentWatcher, startCompany, viteConfig, companyRoute, executorRoute, mailCompose, mailBridge] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/CompanyDashboard.tsx", import.meta.url), "utf8"),
@@ -54,6 +54,7 @@ test("keeps runtime, credential, execution, and mail boundaries explicit", async
     readFile(new URL("../runtime/bridge.ps1", import.meta.url), "utf8"),
     readFile(new URL("../runtime/Import-GitHubCredential.ps1", import.meta.url), "utf8"),
     readFile(new URL("../runtime/Watch-GitHubMerges.ps1", import.meta.url), "utf8"),
+    readFile(new URL("../runtime/Watch-SystemIncidents.ps1", import.meta.url), "utf8"),
     readFile(new URL("../runtime/Start-Company.ps1", import.meta.url), "utf8"),
     readFile(new URL("../vite.config.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/company/route.ts", import.meta.url), "utf8"),
@@ -72,6 +73,8 @@ test("keeps runtime, credential, execution, and mail boundaries explicit", async
   assert.match(hosting, /"r2": "CHARACTERS"/);
   assert.match(gitignore, /assets\/agent_auth\/auth\.json/);
   assert.match(gitignore, /assets\/github_auth\/token/);
+  assert.match(gitignore, /assets\/discord\/bot-token/);
+  assert.match(gitignore, /assets\/discord\/config\.json/);
   assert.doesNotMatch(dockerfile, /auth\.json|agent_auth/i);
   assert.doesNotMatch(dockerfile, /docker.sock|\/usr\/local\/bin\/docker/);
   assert.match(dockerfile, /@openai\/codex/);
@@ -111,6 +114,9 @@ test("keeps runtime, credential, execution, and mail boundaries explicit", async
   assert.match(githubMergeWatcher, /"pull", "--ff-only", "origin", "main"/);
   assert.match(githubMergeWatcher, /-BuildImages -SkipMergeWatcher/);
   assert.doesNotMatch(githubMergeWatcher, /reset|checkout\s+--|push/i);
+  assert.match(systemIncidentWatcher, /laazienda-system-incident:v1/);
+  assert.match(systemIncidentWatcher, /Get-VerifiedIssue/);
+  assert.match(systemIncidentWatcher, /completeIncident/);
   assert.doesNotMatch(runtimeBridge, /foreach \(\$employee in \$workforce\.employees\)/);
   assert.match(executorRoute, /idx_agent_runs_active_job|INSERT OR IGNORE INTO agent_runs/);
   assert.match(executorRoute, /execution_cycle/);
@@ -118,8 +124,12 @@ test("keeps runtime, credential, execution, and mail boundaries explicit", async
   assert.match(executorRoute, /githubAuthenticationRequiredMessage/);
   assert.match(executorRoute, /workspaceRunId/);
   assert.match(executorRoute, /docker-provisioner/);
-  assert.match(startCompany, /127\.0\.0\.1:3000:3000/);
+  assert.match(startCompany, /127\.0\.0\.1:3002:3000/);
+  assert.match(startCompany, /http:\/\/omc-portal:3000/);
   assert.match(startCompany, /RUNTIME_BRIDGE_TOKEN/);
+  assert.match(startCompany, /SOURCE_COMMIT/);
+  assert.match(startCompany, /Watch-SystemIncidents\.ps1/);
+  assert.match(startCompany, /discord\\Start-Discord\.ps1/);
   assert.match(startCompany, /Start-Process[\s\S]*-WindowStyle Hidden/);
   assert.match(companyRoute, /reportRepositorySync/);
   assert.match(companyRoute, /INSERT OR IGNORE INTO repository_syncs/);

@@ -37,6 +37,8 @@ The runner enables `sandbox_workspace_write.network_access` only when HRM has pr
 
 ## Start the company
 
+The host scripts support both the built-in Windows PowerShell 5.1 and PowerShell 7.
+
 Start the portal and Stalwart network, then run:
 
 ```powershell

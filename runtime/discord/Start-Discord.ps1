@@ -7,6 +7,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
+$pathSafetyPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\Path-Safety.ps1"))
+if (-not (Test-Path -LiteralPath $pathSafetyPath -PathType Leaf)) {
+  throw "The repository path-safety helper is unavailable."
+}
+$pathSafetyItem = Get-Item -LiteralPath $pathSafetyPath -Force
+if (($pathSafetyItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+  throw "Refusing a reparse point for the repository path-safety helper."
+}
+. $pathSafetyPath
 $configPath = [IO.Path]::GetFullPath((Join-Path $repoRoot "assets\discord\config.json"))
 $botTokenPath = [IO.Path]::GetFullPath((Join-Path $repoRoot "assets\discord\bot-token"))
 $discordRuntimeRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "assets\discord\runtime"))
@@ -44,12 +53,10 @@ foreach ($path in @($configPath, $botTokenPath, $discordRuntimeRoot, $gatewayCli
   $scopedTokenPath, $PSScriptRoot, (Join-Path $PSScriptRoot "Dockerfile"),
   (Join-Path $PSScriptRoot "Gateway.Dockerfile"))) {
   $resolved = [IO.Path]::GetFullPath($path)
-  if (-not $resolved.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Resolved Discord adapter path left the repository boundary."
-  }
+  Get-LaAziendaRepositoryRelativePath -RepositoryRoot $repoRoot -CandidatePath $resolved | Out-Null
 }
 foreach ($secretPath in @($configPath, $botTokenPath, $gatewayClientTokenPath, $scopedTokenPath)) {
-  $relativeSecretPath = [IO.Path]::GetRelativePath($repoRoot, $secretPath).Replace('\', '/')
+  $relativeSecretPath = Get-LaAziendaRepositoryRelativePath -RepositoryRoot $repoRoot -CandidatePath $secretPath
   & git -C $repoRoot check-ignore --quiet -- $relativeSecretPath
   if ($LASTEXITCODE -ne 0) { throw "Discord runtime material must remain Git-ignored." }
 }

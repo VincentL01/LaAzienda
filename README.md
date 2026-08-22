@@ -24,7 +24,7 @@ A queued task is not shown as active until Aurelia claims it and invokes `codex 
 
 ## Run locally
 
-Prerequisite: Docker Desktop. Start the complete loopback-only company with:
+Prerequisite: Docker Desktop. The host launchers support both Windows PowerShell 5.1 and PowerShell 7. Start the complete loopback-only company with:
 
 ```powershell
 .\runtime\Start-Company.ps1 -BuildImages

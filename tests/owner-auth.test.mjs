@@ -11,6 +11,7 @@ import {
   clearOwnerSession,
   deriveOwnerSessionTokenHash,
   deriveOwnerVerifier,
+  ownerAuthorizationStatus,
   ownerAuthorized,
   readOwnerCredential,
   setOwnerSession,
@@ -112,6 +113,7 @@ test("unlock stores only a token hash and authorizes only the opaque unexpired s
   const request = new Request("http://localhost:3002/training", {
     headers: { cookie: `${OWNER_SESSION_COOKIE_NAME}=${token}` },
   });
+  assert.equal(await ownerAuthorizationStatus(request, verifier, d1), "authorized");
   assert.equal(await ownerAuthorized(request, verifier, d1), true);
   assert.equal(await ownerAuthorized(request, null, d1), false);
   assert.equal(await ownerAuthorized(new Request("http://localhost:3002/training"), verifier, d1), false);
@@ -168,6 +170,7 @@ test("missing session schema fails closed and rejected credentials never touch D
   const fakeTokenRequest = new Request("http://localhost:3002/training", {
     headers: { cookie: `${OWNER_SESSION_COOKIE_NAME}=${"x".repeat(43)}` },
   });
+  assert.equal(await ownerAuthorizationStatus(fakeTokenRequest, verifier, missing), "unavailable");
   assert.equal(await ownerAuthorized(fakeTokenRequest, verifier, missing), false);
 
   let databaseTouched = false;
@@ -179,6 +182,24 @@ test("missing session schema fails closed and rejected credentials never touch D
   assert.equal(await setOwnerSession(response, new Request("http://localhost:3002/training"), runtimeToken, verifier, throwingDatabase), false);
   assert.equal(databaseTouched, false);
   assert.equal(response.headers.has("set-cookie"), false);
+});
+
+test("owner session status distinguishes confirmed rejection from verification failure", async () => {
+  const verifier = await deriveOwnerVerifier(ownerCredential);
+  const { d1 } = ownerDatabase();
+  const unknownSession = new Request("http://localhost:3002/training", {
+    headers: { cookie: `${OWNER_SESSION_COOKIE_NAME}=${"x".repeat(43)}` },
+  });
+  assert.equal(await ownerAuthorizationStatus(new Request("http://localhost:3002/training"), verifier, d1), "unauthorized");
+  assert.equal(await ownerAuthorizationStatus(unknownSession, verifier, d1), "unauthorized");
+  assert.equal(await ownerAuthorizationStatus(unknownSession, null, d1), "unavailable");
+
+  const unavailableDatabase = {
+    prepare() { throw new Error("D1 unavailable"); },
+    async batch() { throw new Error("D1 unavailable"); },
+  };
+  assert.equal(await ownerAuthorizationStatus(unknownSession, verifier, unavailableDatabase), "unavailable");
+  assert.equal(await ownerAuthorized(unknownSession, verifier, unavailableDatabase), false);
 });
 
 test("session cookie is strict, HttpOnly, and carries only the opaque token", async () => {
@@ -223,6 +244,31 @@ test("credential JSON is bounded and has one exact field", async () => {
   assert.deepEqual(extraField, { ok: false, status: 400 });
 });
 
+test("locked Training Room exposes a visible keyboard-usable credential control", async () => {
+  const [trainingUi, trainingStyles, globalStyles] = await Promise.all([
+    readFile(new URL("../app/components/TrainingCenter.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/training-records.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(trainingUi, /htmlFor="owner-credential"/);
+  assert.match(trainingUi, /id="owner-credential"[\s\S]*type="password"[\s\S]*placeholder="Paste the copied credential"/);
+  assert.match(trainingUi, /aria-describedby="owner-credential-help"/);
+  assert.match(trainingUi, /type="submit"[\s\S]*disabled=\{busy === "unlock-owner" \|\| !credential\}/);
+  const errorBranch = trainingUi.indexOf("if (!training && error)");
+  const lockedBranch = trainingUi.indexOf("if (!training && locked)");
+  assert.notEqual(errorBranch, -1);
+  assert.notEqual(lockedBranch, -1);
+  assert.ok(errorBranch < lockedBranch);
+  assert.match(trainingUi, /setTraining\(null\);[\s\S]*setLocked\(false\);[\s\S]*setError/);
+  assert.match(trainingUi, /The Training Center is unavailable\./);
+  assert.match(trainingStyles, /\.owner-unlock label \{[\s\S]*display: grid;[\s\S]*gap: \.45rem;/);
+  assert.match(trainingStyles, /\.owner-unlock input \{[\s\S]*width: 100%;[\s\S]*min-height: 44px;[\s\S]*border: 2px solid #766d60;[\s\S]*background: #1c1814;/);
+  assert.match(trainingStyles, /\.owner-unlock input::placeholder \{ color: #8d8372; \}/);
+  assert.match(trainingStyles, /@media \(max-width: 850px\) \{[\s\S]*\.owner-unlock button \{ width: 100%; \}/);
+  assert.match(globalStyles, /@import "\.\/training-records\.css"/);
+});
+
 test("portal receives only the verifier and owner login verifies before schema initialization", async () => {
   const [routeSource, scriptSource, startSource, bridgeSource, reconcileSource, ownerAuthSource, schemaSource, ensureSource, migrationSource, priorMigration] = await Promise.all([
     readFile(new URL("../app/api/owner-session/route.ts", import.meta.url), "utf8"),
@@ -237,6 +283,10 @@ test("portal receives only the verifier and owner login verifies before schema i
     readFile(new URL("../drizzle/0012_common_gideon.sql", import.meta.url), "utf8"),
   ]);
   assert.doesNotMatch(routeSource, /console\.|searchParams|[?&](?:credential|token)=/i);
+  const get = routeSource.slice(routeSource.indexOf("export async function GET"), routeSource.indexOf("export async function POST"));
+  assert.match(get, /ownerAuthorizationStatus\(request\)/);
+  assert.match(get, /status === "unavailable"[\s\S]*authorized: null[\s\S]*status: 503/);
+  assert.match(get, /authorized: status === "authorized"/);
   const post = routeSource.slice(routeSource.indexOf("export async function POST"), routeSource.indexOf("export async function DELETE"));
   assert.ok(post.indexOf("verifyOwnerCredential") < post.indexOf("ensureDatabase"));
   assert.match(post, /if \(!\(await verifyOwnerCredential\(input\.credential\)\)\)[\s\S]*status: 403/);

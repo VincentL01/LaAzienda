@@ -4,7 +4,7 @@ import test from "node:test";
 import { controlActionAuthorized, requiredControlPrincipal } from "../lib/server/control-access.ts";
 import { stringifyTaggedPromptData } from "../lib/server/tagged-prompt-json.ts";
 
-const [companyRoute, mailRoute, employeeRoute, executorRoute, bridgeAuth, secretaryPolicy, reconciler, statusCommand, companyUi, mailUi, animationUi, employeeUi] = await Promise.all([
+const [companyRoute, mailRoute, employeeRoute, executorRoute, bridgeAuth, secretaryPolicy, reconciler, statusCommand, companyUi, mailUi, animationUi, employeeUi, ownerSessionMonitor] = await Promise.all([
   readFile(new URL("../app/api/company/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/api/mail/route.ts", import.meta.url), "utf8"),
   readFile(new URL("../app/api/employees/route.ts", import.meta.url), "utf8"),
@@ -17,6 +17,7 @@ const [companyRoute, mailRoute, employeeRoute, executorRoute, bridgeAuth, secret
   readFile(new URL("../app/components/CompanyMailroom.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/components/AnimationStudio.tsx", import.meta.url), "utf8"),
   readFile(new URL("../app/components/EmployeeOnboarding.tsx", import.meta.url), "utf8"),
+  readFile(new URL("../app/components/useOwnerSessionMonitor.ts", import.meta.url), "utf8"),
 ]);
 
 function handler(source, name) {
@@ -78,7 +79,26 @@ test("locked portal surfaces point the CEO to the owner-session unlock", () => {
   for (const source of [companyUi, mailUi, animationUi, employeeUi]) {
     assert.match(source, /<Link href="\/training">Unlock CEO controls in the Training Room<\/Link>/);
     assert.match(source, /role="alert">\{error\}/);
+    assert.match(source, /response\.status === 403/);
+    assert.match(source, /setLocked\(true\)/);
+    assert.match(source, /CEO controls are locked\./);
+    assert.match(source, /(?:is|are) unavailable\./);
   }
+  assert.match(companyUi, /setCompany\(null\); setLocked\(true\)/);
+  assert.match(companyUi, /Retrying automatically/);
+  for (const source of [mailUi, animationUi, employeeUi]) {
+    assert.match(source, />Retry<\/button>/);
+    assert.match(source, /useOwnerSessionMonitor\(\{/);
+    assert.doesNotMatch(source, /window\.setInterval/);
+  }
+  assert.match(ownerSessionMonitor, /fetch\("\/api\/owner-session", \{ cache: "no-store" \}\)/);
+  assert.match(ownerSessionMonitor, /if \(!response\.ok\) return/);
+  assert.match(ownerSessionMonitor, /window\.setInterval\([\s\S]*15_000/);
+  assert.match(ownerSessionMonitor, /window\.addEventListener\("focus", refreshOnFocus\)/);
+  assert.match(ownerSessionMonitor, /data\.authorized === false[\s\S]*onLockedRef\.current\(\)/);
+  assert.match(ownerSessionMonitor, /data\.authorized === true && locked[\s\S]*onRestoredRef\.current\(\)/);
+  assert.match(employeeUi, /chunkResponse\.status === 403[\s\S]*setWorkforce\(null\)[\s\S]*setLocked\(true\)/);
+  assert.match(employeeUi, /response\.status === 403[\s\S]*authorizationLost = true[\s\S]*setWorkforce\(null\)/);
 });
 
 test("Dorothy receives fresh bounded allowlisted evidence without ambient portal access", () => {

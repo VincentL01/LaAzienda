@@ -41,7 +41,11 @@ export function TrainingCenter() {
         if (!response.ok) throw new Error(data.error || "Could not open the Training Center");
         if (!cancelled) { setTraining(data); setLocked(false); setError(""); }
       } catch (reason) {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not open the Training Center");
+        if (!cancelled) {
+          setTraining(null);
+          setLocked(false);
+          setError(reason instanceof Error ? reason.message : "Could not open the Training Center");
+        }
       } finally {
         loading = false;
       }
@@ -130,11 +134,16 @@ export function TrainingCenter() {
   }
 
   const ownerUnlockPanel = <form className="owner-unlock panel" onSubmit={unlockOwner}>
-        <div><span className="eyebrow">CEO CONTROL</span><h2>Training controls are locked</h2><p>Paste the independent local owner credential copied by <code>runtime/Copy-CeoTrainingCredential.ps1</code>. It is not the runtime bridge token and never enters Docker configuration; this form clears it immediately after creating an opaque eight-hour HttpOnly session.</p></div>
-    <label>CEO training credential<input type="password" autoComplete="off" value={credential} onChange={(event) => setCredential(event.target.value)} required /></label>
-    <button className="primary-action" disabled={busy === "unlock-owner" || !credential}>{busy === "unlock-owner" ? "Unlocking..." : "Unlock controls"}</button>
+    <div><span className="eyebrow">CEO CONTROL</span><h2>Training controls are locked</h2><p>Run <code>runtime/Copy-CeoTrainingCredential.ps1</code> on this machine, then paste the copied owner credential below. It is not the runtime bridge token and never enters Docker configuration; this form clears it immediately after creating an opaque eight-hour HttpOnly session.</p></div>
+    <label htmlFor="owner-credential">
+      <span>CEO owner credential</span>
+      <input id="owner-credential" type="password" autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="Paste the copied credential" aria-describedby="owner-credential-help" value={credential} onChange={(event) => setCredential(event.target.value)} required />
+      <small id="owner-credential-help">Paste the credential to enable the unlock button.</small>
+    </label>
+    <button type="submit" className="primary-action" disabled={busy === "unlock-owner" || !credential}>{busy === "unlock-owner" ? "Unlocking..." : "Unlock controls"}</button>
   </form>;
 
+  if (!training && error) return <main className="loading-room"><div><b>The Training Center is unavailable.</b><p className="studio-error" role="alert">{error}</p><button className="primary-action" onClick={() => setReloadKey((value) => value + 1)}>Retry</button></div></main>;
   if (!training && locked) return <main className="training-shell">
     <section className="training-hero">
       <div><span className="eyebrow">GLOBAL TRAINING CENTER</span><h1>Learn once.<br />Teach the whole company.</h1></div>
@@ -143,7 +152,6 @@ export function TrainingCenter() {
     <div aria-live="polite">{actionError ? <p className="studio-error" role="alert">{actionError}</p> : null}</div>
     {ownerUnlockPanel}
   </main>;
-  if (!training && error) return <main className="loading-room"><p className="studio-error" role="alert">{error}</p><button className="primary-action" onClick={() => setReloadKey((value) => value + 1)}>Retry</button></main>;
   if (!training) return <main className="loading-room"><span className="pixel-loader" /> Opening the Training Center...</main>;
 
   return (

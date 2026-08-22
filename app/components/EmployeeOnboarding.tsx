@@ -10,6 +10,7 @@ import {
   type WorkforceState,
 } from "@/lib/company";
 import { EmployeeSprite } from "./EmployeeSprite";
+import { useOwnerSessionMonitor } from "./useOwnerSessionMonitor";
 
 export function EmployeeOnboarding() {
   const [workforce, setWorkforce] = useState<WorkforceState | null>(null);
@@ -25,20 +26,30 @@ export function EmployeeOnboarding() {
   const [skillIds, setSkillIds] = useState<string[]>([]);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [locked, setLocked] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const characterInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/employees", { cache: "no-store" })
-      .then(async (response) => {
+    let loading = false;
+    let initialized = false;
+    async function load() {
+      if (loading) return;
+      loading = true;
+      try {
+        const response = await fetch("/api/employees", { cache: "no-store" });
         const data = await response.json() as WorkforceState & { error?: string };
+        if (response.status === 403) {
+          if (!cancelled) { setWorkforce(null); setLocked(true); setError(""); }
+          return;
+        }
         if (!response.ok) throw new Error(data.error || "Could not load employees");
-        return data;
-      })
-      .then((data) => {
         if (cancelled) return;
         setWorkforce(data);
-        const defaultRole = data.roles.find((profile) => profile.id === "software-engineer") ?? data.roles[0];
+        setLocked(false);
+        setError("");
+        const defaultRole = !initialized ? data.roles.find((profile) => profile.id === "software-engineer") ?? data.roles[0] : undefined;
         if (defaultRole) {
           setRoleProfileId(defaultRole.id);
           setRole(defaultRole.title);
@@ -48,10 +59,25 @@ export function EmployeeOnboarding() {
           const recommended = new Set(defaultRole.recommendedSkills);
           setSkillIds(data.skills.filter((skill) => skill.cacheStatus === "cached" && recommended.has(skill.packageRef.split("@").at(-1) ?? skill.packageRef)).map((skill) => skill.id));
         }
-      })
-      .catch((reason: Error) => { if (!cancelled) setError(reason.message); });
+        initialized = true;
+      } catch (reason) {
+        if (!cancelled) {
+          setLocked(false);
+          setError(reason instanceof Error ? reason.message : "Could not load employees");
+        }
+      } finally {
+        loading = false;
+      }
+    }
+    void load();
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
+
+  useOwnerSessionMonitor({
+    locked,
+    onLocked: () => { setWorkforce(null); setLocked(true); setError(""); },
+    onRestored: () => { setReloadKey((value) => value + 1); },
+  });
 
   async function act(payload: Record<string, unknown>, key: string) {
     setBusy(key);
@@ -63,8 +89,15 @@ export function EmployeeOnboarding() {
         body: JSON.stringify(payload),
       });
       const data = await response.json() as WorkforceState & { error?: string };
+      if (response.status === 403) {
+        setWorkforce(null);
+        setLocked(true);
+        setError("");
+        return false;
+      }
       if (!response.ok) throw new Error(data.error || "The workforce action failed");
       setWorkforce(data);
+      setLocked(false);
       return true;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Something went wrong");
@@ -89,6 +122,7 @@ export function EmployeeOnboarding() {
     setError("");
     setCharacterNotice("");
     setUploadProgress(0);
+    let authorizationLost = false;
     try {
       const chunkSize = 384 * 1024;
       const totalChunks = Math.ceil(characterFile.size / chunkSize);
@@ -104,6 +138,13 @@ export function EmployeeOnboarding() {
             headers: { "content-type": "application/octet-stream" },
             body: chunk,
           });
+          if (chunkResponse.status === 403) {
+            authorizationLost = true;
+            setWorkforce(null);
+            setLocked(true);
+            setError("");
+            throw new Error("CEO controls are locked");
+          }
           if (!chunkResponse.ok) {
             const result = await chunkResponse.json() as { error?: string };
             throw new Error(result.error || `Upload chunk ${index + 1} failed`);
@@ -117,6 +158,13 @@ export function EmployeeOnboarding() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sessionId, totalChunks, expectedSize: characterFile.size, originalFilename: characterFile.name }),
       });
+      if (response.status === 403) {
+        authorizationLost = true;
+        setWorkforce(null);
+        setLocked(true);
+        setError("");
+        throw new Error("CEO controls are locked");
+      }
       const data = await response.json() as WorkforceState & { importedCharacterId?: string; error?: string };
       if (!response.ok) throw new Error(data.error || "The character could not be imported");
       setUploadProgress(100);
@@ -129,7 +177,7 @@ export function EmployeeOnboarding() {
       setCharacterFile(null);
       if (characterInput.current) characterInput.current.value = "";
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Character import failed");
+      if (!authorizationLost) setError(reason instanceof Error ? reason.message : "Character import failed");
     } finally {
       setBusy("");
     }
@@ -162,9 +210,11 @@ export function EmployeeOnboarding() {
     setSkillIds(cachedSkills.filter((skill) => recommended.has(skill.packageRef.split("@").at(-1) ?? skill.packageRef)).map((skill) => skill.id));
   }
 
-  if (!workforce) return error
-    ? <main className="loading-room"><div><b>Personnel files are locked or unavailable.</b><p role="alert">{error}</p><Link href="/training">Unlock CEO controls in the Training Room</Link></div></main>
-    : <main className="loading-room"><span className="pixel-loader" /> Opening personnel files...</main>;
+  if (!workforce) return locked
+    ? <main className="loading-room"><div><b>CEO controls are locked.</b><p>Personnel files remain protected until this browser has an active owner session.</p><Link href="/training">Unlock CEO controls in the Training Room</Link></div></main>
+    : error
+      ? <main className="loading-room"><div><b>Personnel files are unavailable.</b><p role="alert">{error}</p><button className="primary-action" onClick={() => setReloadKey((value) => value + 1)}>Retry</button></div></main>
+      : <main className="loading-room"><span className="pixel-loader" /> Opening personnel files...</main>;
 
   return (
     <main className="people-shell">

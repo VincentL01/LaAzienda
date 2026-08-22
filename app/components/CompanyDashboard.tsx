@@ -82,6 +82,7 @@ export function CompanyDashboard() {
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [locked, setLocked] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,10 +91,17 @@ export function CompanyDashboard() {
       try {
         const response = await fetch("/api/company", { cache: "no-store" });
         const data = await response.json() as CompanyState & { error?: string };
+        if (response.status === 403) {
+          if (!cancelled) { setCompany(null); setLocked(true); setError(""); }
+          return;
+        }
         if (!response.ok) throw new Error(data.error || "Could not load the company");
-        if (!cancelled) { setCompany(data); setError(""); }
+        if (!cancelled) { setCompany(data); setLocked(false); setError(""); }
       } catch (reason) {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : "Could not load the company");
+        if (!cancelled) {
+          setLocked(false);
+          setError(reason instanceof Error ? reason.message : "Could not load the company");
+        }
       } finally {
         if (!cancelled) timer = setTimeout(refresh, 4000);
       }
@@ -112,8 +120,15 @@ export function CompanyDashboard() {
         body: JSON.stringify(payload),
       });
       const data = await response.json() as CompanyState & { error?: string };
+      if (response.status === 403) {
+        setCompany(null);
+        setLocked(true);
+        setError("");
+        return;
+      }
       if (!response.ok) throw new Error(data.error || "The company could not complete that action");
       setCompany(data);
+      setLocked(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Something went wrong");
     } finally {
@@ -150,9 +165,11 @@ export function CompanyDashboard() {
     done: company?.tasks.filter((task) => task.status === "done").length ?? 0,
   }), [company?.tasks]);
 
-  if (!company) return error
-    ? <main className="loading-room"><div><b>Company records are locked or unavailable.</b><p role="alert">{error}</p><Link href="/training">Unlock CEO controls in the Training Room</Link></div></main>
-    : <main className="loading-room"><span className="pixel-loader" /> Waking the company...</main>;
+  if (!company) return locked
+    ? <main className="loading-room"><div><b>CEO controls are locked.</b><p>Company records remain protected until this browser has an active owner session.</p><Link href="/training">Unlock CEO controls in the Training Room</Link></div></main>
+    : error
+      ? <main className="loading-room"><div><b>Company records are unavailable.</b><p role="alert">{error}</p><small>Retrying automatically…</small></div></main>
+      : <main className="loading-room"><span className="pixel-loader" /> Waking the company...</main>;
 
   const taskEmployees = company.employees.filter((item) => !["read-all", "docker-provisioner"].includes(item.resourceAccess));
   const projectManagers = company.employees.filter((item) => item.roleProfileId === "project-manager");

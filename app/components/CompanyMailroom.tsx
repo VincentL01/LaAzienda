@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import type { MailroomState } from "@/lib/company";
+import { useOwnerSessionMonitor } from "./useOwnerSessionMonitor";
 
 export function CompanyMailroom() {
   const [mailroom, setMailroom] = useState<MailroomState | null>(null);
@@ -13,25 +14,48 @@ export function CompanyMailroom() {
   const [messageKey, setMessageKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [locked, setLocked] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/mail", { cache: "no-store" })
-      .then(async (response) => {
+    let loading = false;
+    async function load() {
+      if (loading) return;
+      loading = true;
+      try {
+        const response = await fetch("/api/mail", { cache: "no-store" });
         const data = await response.json() as MailroomState & { error?: string };
+        if (response.status === 403) {
+          if (!cancelled) { setMailroom(null); setLocked(true); setError(""); }
+          return;
+        }
         if (!response.ok) throw new Error(data.error || "Could not open the mailroom");
-        return data;
-      })
-      .then((data) => {
         if (cancelled) return;
         setMailroom(data);
+        setLocked(false);
+        setError("");
         const sender = data.employees.find((employee) => employee.resourceAccess !== "read-all");
-        setSenderEmployeeId(sender?.id ?? "");
-        setRecipientEmployeeId(data.employees.find((employee) => employee.id !== sender?.id)?.id ?? "");
-      })
-      .catch((reason: Error) => { if (!cancelled) setError(reason.message); });
+        setSenderEmployeeId((current) => current || sender?.id || "");
+        setRecipientEmployeeId((current) => current || data.employees.find((employee) => employee.id !== sender?.id)?.id || "");
+      } catch (reason) {
+        if (!cancelled) {
+          setLocked(false);
+          setError(reason instanceof Error ? reason.message : "Could not open the mailroom");
+        }
+      } finally {
+        loading = false;
+      }
+    }
+    void load();
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
+
+  useOwnerSessionMonitor({
+    locked,
+    onLocked: () => { setMailroom(null); setLocked(true); setError(""); },
+    onRestored: () => { setReloadKey((value) => value + 1); },
+  });
 
   function updateDraft(update: () => void) {
     update();
@@ -58,8 +82,15 @@ export function CompanyMailroom() {
         }),
       });
       const data = await response.json() as MailroomState & { error?: string };
+      if (response.status === 403) {
+        setMailroom(null);
+        setLocked(true);
+        setError("");
+        return;
+      }
       if (!response.ok) throw new Error(data.error || "The message could not be queued");
       setMailroom(data);
+      setLocked(false);
       setSubject("");
       setBody("");
       setMessageKey("");
@@ -70,9 +101,11 @@ export function CompanyMailroom() {
     }
   }
 
-  if (!mailroom) return error
-    ? <main className="loading-room"><div><b>Company mail is locked or unavailable.</b><p role="alert">{error}</p><Link href="/training">Unlock CEO controls in the Training Room</Link></div></main>
-    : <main className="loading-room"><span className="pixel-loader" /> Opening the company mailroom...</main>;
+  if (!mailroom) return locked
+    ? <main className="loading-room"><div><b>CEO controls are locked.</b><p>Company mail remains protected until this browser has an active owner session.</p><Link href="/training">Unlock CEO controls in the Training Room</Link></div></main>
+    : error
+      ? <main className="loading-room"><div><b>Company mail is unavailable.</b><p role="alert">{error}</p><button className="primary-action" onClick={() => setReloadKey((value) => value + 1)}>Retry</button></div></main>
+      : <main className="loading-room"><span className="pixel-loader" /> Opening the company mailroom...</main>;
 
   const dorothy = mailroom.employees.find((employee) => employee.id === "employee-dorothy");
   const senders = mailroom.employees.filter((employee) => employee.resourceAccess !== "read-all");

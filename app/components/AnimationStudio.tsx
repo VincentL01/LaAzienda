@@ -12,25 +12,54 @@ import {
   type AnimationState,
   type CompanyState,
 } from "@/lib/company";
+import { useOwnerSessionMonitor } from "./useOwnerSessionMonitor";
 
 export function AnimationStudio() {
   const [mappings, setMappings] = useState<AnimationMapping[]>([]);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [locked, setLocked] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/company", { cache: "no-store" })
-      .then(async (response) => {
+    let loading = false;
+    async function load() {
+      if (loading) return;
+      loading = true;
+      try {
+        const response = await fetch("/api/company", { cache: "no-store" });
         const data = await response.json() as CompanyState & { error?: string };
+        if (response.status === 403) {
+          if (!cancelled) { setMappings([]); setLocked(true); setError(""); }
+          return;
+        }
         if (!response.ok) throw new Error(data.error || "Could not load animation rules");
-        return data;
-      })
-      .then((data) => { if (!cancelled) setMappings(data.mappings); })
-      .catch((reason: Error) => { if (!cancelled) setError(reason.message); });
+        if (!cancelled) {
+          setMappings(data.mappings);
+          setSaved(false);
+          setLocked(false);
+          setError("");
+        }
+      } catch (reason) {
+        if (!cancelled) {
+          setLocked(false);
+          setError(reason instanceof Error ? reason.message : "Could not load animation rules");
+        }
+      } finally {
+        loading = false;
+      }
+    }
+    void load();
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
+
+  useOwnerSessionMonitor({
+    locked,
+    onLocked: () => { setMappings([]); setLocked(true); setError(""); },
+    onRestored: () => { setReloadKey((value) => value + 1); },
+  });
 
   function change(status: string, patch: Partial<AnimationMapping>) {
     setSaved(false);
@@ -47,8 +76,15 @@ export function AnimationStudio() {
         body: JSON.stringify({ action: "saveMappings", mappings }),
       });
       const data = await response.json() as CompanyState & { error?: string };
+      if (response.status === 403) {
+        setMappings([]);
+        setLocked(true);
+        setError("");
+        return;
+      }
       if (!response.ok) throw new Error(data.error || "Could not save animation rules");
       setMappings(data.mappings);
+      setLocked(false);
       setSaved(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Something went wrong");
@@ -57,9 +93,11 @@ export function AnimationStudio() {
     }
   }
 
-  if (!mappings.length) return error
-    ? <main className="loading-room"><div><b>Animation controls are locked or unavailable.</b><p role="alert">{error}</p><Link href="/training">Unlock CEO controls in the Training Room</Link></div></main>
-    : <main className="loading-room"><span className="pixel-loader" /> Loading animation studio…</main>;
+  if (!mappings.length) return locked
+    ? <main className="loading-room"><div><b>CEO controls are locked.</b><p>Animation controls remain protected until this browser has an active owner session.</p><Link href="/training">Unlock CEO controls in the Training Room</Link></div></main>
+    : error
+      ? <main className="loading-room"><div><b>Animation controls are unavailable.</b><p role="alert">{error}</p><button className="primary-action" onClick={() => setReloadKey((value) => value + 1)}>Retry</button></div></main>
+      : <main className="loading-room"><span className="pixel-loader" /> Loading animation studio…</main>;
 
   return (
     <main className="studio-shell">

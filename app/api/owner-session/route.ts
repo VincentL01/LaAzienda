@@ -1,7 +1,7 @@
 import { ensureDatabase } from "@/db/ensure";
 import {
   clearOwnerSession,
-  ownerAuthorized,
+  ownerAuthorizationStatus,
   readOwnerCredential,
   setOwnerSession,
   verifyOwnerCredential,
@@ -10,7 +10,14 @@ import {
 const noStoreHeaders = { "Cache-Control": "no-store" };
 
 export async function GET(request: Request) {
-  return Response.json({ authorized: await ownerAuthorized(request) }, { headers: noStoreHeaders });
+  const status = await ownerAuthorizationStatus(request);
+  if (status === "unavailable") {
+    return Response.json({ authorized: null, error: "Owner session verification is unavailable; try again" }, {
+      status: 503,
+      headers: noStoreHeaders,
+    });
+  }
+  return Response.json({ authorized: status === "authorized" }, { headers: noStoreHeaders });
 }
 
 export async function POST(request: Request) {

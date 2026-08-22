@@ -36,6 +36,8 @@ export interface OwnerSessionDatabase {
   batch(statements: OwnerSessionStatement[]): Promise<Array<{ meta: { changes?: number } }>>;
 }
 
+export type OwnerAuthorizationStatus = "authorized" | "unauthorized" | "unavailable";
+
 function verifierIsUsable(verifier: unknown): verifier is string {
   return typeof verifier === "string" && OWNER_VERIFIER_PATTERN.test(verifier);
 }
@@ -133,21 +135,32 @@ export async function verifyOwnerCredential(credential: unknown, configuredVerif
   return Boolean(expected && candidate && constantTimeMatch(candidate, expected));
 }
 
+export async function ownerAuthorizationStatus(
+  request: Request,
+  configuredVerifier?: string | null,
+  database?: OwnerSessionDatabase | null,
+): Promise<OwnerAuthorizationStatus> {
+  const tokenHash = await deriveOwnerSessionTokenHash(cookieValue(request));
+  if (!tokenHash) return "unauthorized";
+  const verifier = await configuredOwnerVerifier(configuredVerifier);
+  const d1 = await configuredOwnerDatabase(database);
+  if (!verifier || !d1) return "unavailable";
+  try {
+    return await d1.prepare(READ_OWNER_SESSION_SQL).bind(tokenHash, verifier).first<{ authorized: number }>()
+      ? "authorized"
+      : "unauthorized";
+  } catch {
+    // The first unlock creates the schema. Missing or unavailable state is not authority.
+    return "unavailable";
+  }
+}
+
 export async function ownerAuthorized(
   request: Request,
   configuredVerifier?: string | null,
   database?: OwnerSessionDatabase | null,
 ) {
-  const verifier = await configuredOwnerVerifier(configuredVerifier);
-  const tokenHash = await deriveOwnerSessionTokenHash(cookieValue(request));
-  const d1 = await configuredOwnerDatabase(database);
-  if (!verifier || !tokenHash || !d1) return false;
-  try {
-    return Boolean(await d1.prepare(READ_OWNER_SESSION_SQL).bind(tokenHash, verifier).first<{ authorized: number }>());
-  } catch {
-    // The first unlock creates the schema. Missing or unavailable state is not authority.
-    return false;
-  }
+  return await ownerAuthorizationStatus(request, configuredVerifier, database) === "authorized";
 }
 
 export async function setOwnerSession(

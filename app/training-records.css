@@ -104,6 +104,33 @@
 .owner-unlock h2,
 .owner-unlock p { margin: .25rem 0; }
 
+.owner-unlock > div,
+.owner-unlock label { min-width: 0; }
+
+.owner-unlock label {
+  display: grid;
+  gap: .45rem;
+  color: #b9ad98;
+  font: 800 10px Consolas, monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.owner-unlock input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  border: 2px solid #766d60;
+  background: #1c1814;
+  color: var(--cream);
+  padding: 11px 12px;
+  font: 700 13px/1.45 "Trebuchet MS", sans-serif;
+}
+
+.owner-unlock input::placeholder { color: #8d8372; }
+.owner-unlock label small { color: #83796a; font: 700 9px/1.4 Consolas, monospace; letter-spacing: 0; text-transform: none; }
+.owner-unlock button { min-height: 44px; }
+
 .full-digest,
 .training-history details code {
   overflow-wrap: anywhere;
@@ -112,4 +139,5 @@
 
 @media (max-width: 850px) {
   .owner-unlock { grid-template-columns: 1fr; }
+  .owner-unlock button { width: 100%; }
 }

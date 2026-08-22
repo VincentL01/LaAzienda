@@ -214,7 +214,7 @@ if (-not $portalId) {
 }
 $portalEnvironmentJson = & docker container inspect --format "{{json .Config.Env}}" $portalContainer
 if ($LASTEXITCODE -ne 0) { throw "The Company Portal environment could not be verified." }
-$portalEnvironment = @($portalEnvironmentJson | ConvertFrom-Json)
+$portalEnvironment = @($portalEnvironmentJson | ConvertFrom-Json | ForEach-Object { $_ })
 if (@($portalEnvironment | Where-Object { $_ -like "OWNER_SESSION_CREDENTIAL=*" }).Count -gt 0) {
   throw "The Company Portal must never contain the raw owner credential."
 }

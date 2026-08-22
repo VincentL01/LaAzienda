@@ -52,16 +52,69 @@ function quotePowerShell(value) {
 }
 
 test("runtime path checks do not depend on APIs missing from Windows PowerShell 5.1", async () => {
-  const sources = await Promise.all([
+  const [copySource, startSource, discordSource, pathSource, bridgeSource, incidentWatcherSource] = await Promise.all([
     readFile(new URL("../runtime/Copy-CeoTrainingCredential.ps1", import.meta.url), "utf8"),
     readFile(new URL("../runtime/Start-Company.ps1", import.meta.url), "utf8"),
     readFile(new URL("../runtime/discord/Start-Discord.ps1", import.meta.url), "utf8"),
     readFile(new URL("../runtime/Path-Safety.ps1", import.meta.url), "utf8"),
+    readFile(new URL("../runtime/bridge.ps1", import.meta.url), "utf8"),
+    readFile(new URL("../runtime/Watch-SystemIncidents.ps1", import.meta.url), "utf8"),
   ]);
 
-  for (const source of sources) assert.doesNotMatch(source, /Path\]::GetRelativePath/);
-  assert.match(sources[3], /StartsWith\(\$rootPrefix, \$comparison\)/);
-  assert.match(sources[3], /Substring\(\$rootPrefix\.Length\)/);
+  for (const source of [copySource, startSource, discordSource, pathSource, bridgeSource, incidentWatcherSource]) {
+    assert.doesNotMatch(source, /Path\]::GetRelativePath/);
+  }
+  assert.match(pathSource, /StartsWith\(\$rootPrefix, \$comparison\)/);
+  assert.match(pathSource, /Substring\(\$rootPrefix\.Length\)/);
+  assert.match(startSource, /\$portalEnvironment = @\(\$portalEnvironmentJson \| ConvertFrom-Json \| ForEach-Object \{ \$_ \}\)/);
+  assert.equal(bridgeSource.match(/ConvertFrom-Json \| ForEach-Object \{ \$_ \}/g)?.length, 3);
+  assert.match(incidentWatcherSource, /\$items = @\(Invoke-RestMethod[\s\S]*?-TimeoutSec 20 \| ForEach-Object \{ \$_ \}\)/);
+});
+
+test("Windows PowerShell 5.1 flattens Docker JSON arrays before identity checks", {
+  skip: process.platform !== "win32",
+}, () => {
+  const result = runWindowsPowerShell([
+    "$json = '[{\"Name\":\"portal\"}]'",
+    "$rows = @($json | ConvertFrom-Json | ForEach-Object { $_ })",
+    "if ($rows.Count -ne 1) { throw 'JSON array did not flatten to one row.' }",
+    "if ($rows[0].GetType().FullName -ne 'System.Management.Automation.PSCustomObject') { throw 'JSON row remained nested.' }",
+    "if ($rows[0].Name -cne 'portal') { throw 'JSON row identity was not readable.' }",
+    "Write-Output 'json-array-compatible'",
+  ].join("\n"));
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), "json-array-compatible");
+});
+
+test("Windows PowerShell 5.1 flattens REST arrays before issue scans and pagination", {
+  skip: process.platform !== "win32",
+}, () => {
+  const result = runWindowsPowerShell([
+    "function Get-NoEnumerateItems([int]$Count, [int]$Offset = 0) {",
+    "  $items = @()",
+    "  for ($index = 1; $index -le $Count; $index++) { $items += [pscustomobject]@{ id = $Offset + $index } }",
+    "  Write-Output -NoEnumerate $items",
+    "}",
+    "foreach ($count in @(0, 1, 2)) {",
+    "  $rows = @(Get-NoEnumerateItems -Count $count | ForEach-Object { $_ })",
+    "  if ($rows.Count -ne $count) { throw \"REST array count $count remained nested.\" }",
+    "}",
+    "$found = $null",
+    "$visitedPages = 0",
+    "for ($page = 1; $page -le 20; $page++) {",
+    "  $visitedPages++",
+    "  $items = if ($page -eq 1) { @(Get-NoEnumerateItems -Count 100) } else { @(Get-NoEnumerateItems -Count 2 -Offset 100) }",
+    "  $items = @($items | ForEach-Object { $_ })",
+    "  foreach ($item in $items) { if ($item.id -eq 101) { $found = $item; break } }",
+    "  if ($found -or $items.Count -lt 100) { break }",
+    "}",
+    "if ($found.id -ne 101 -or $visitedPages -ne 2) { throw 'Issue scan did not preserve itemwise pagination.' }",
+    "Write-Output 'rest-array-compatible'",
+  ].join("\n"));
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), "rest-array-compatible");
 });
 
 test("CEO credential copy helper runs on Windows PowerShell 5.1 without touching the real clipboard", {

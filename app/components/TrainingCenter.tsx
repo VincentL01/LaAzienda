@@ -134,9 +134,9 @@ export function TrainingCenter() {
   }
 
   const ownerUnlockPanel = <form className="owner-unlock panel" onSubmit={unlockOwner}>
-    <div><span className="eyebrow">CEO CONTROL</span><h2>Training controls are locked</h2><p>Run <code>runtime/Copy-CeoTrainingCredential.ps1</code> on this machine, then paste the copied owner credential below. It is not the runtime bridge token and never enters Docker configuration; this form clears it immediately after creating an opaque eight-hour HttpOnly session.</p></div>
+    <div><span className="eyebrow">CEO CONTROL</span><h2>Training controls are locked</h2><p>Run <code>runtime/Copy-CompanyOwnerCredential.ps1</code> on this machine, then paste the copied company-owner credential below. It is not the runtime bridge token and never enters Docker configuration; this form clears it immediately after creating an opaque eight-hour HttpOnly session.</p></div>
     <label htmlFor="owner-credential">
-      <span>CEO owner credential</span>
+      <span>Company owner credential</span>
       <input id="owner-credential" type="password" autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="Paste the copied credential" aria-describedby="owner-credential-help" value={credential} onChange={(event) => setCredential(event.target.value)} required />
       <small id="owner-credential-help">Paste the credential to enable the unlock button.</small>
     </label>

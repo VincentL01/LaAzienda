@@ -11,13 +11,13 @@ async function createCredentialFixture({ ignored = true } = {}) {
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "laazienda-owner-copy-"));
   const runtimeRoot = path.join(fixtureRoot, "runtime");
   const credentialRoot = path.join(fixtureRoot, "assets", "owner", "runtime");
-  const fixtureScript = path.join(runtimeRoot, "Copy-CeoTrainingCredential.ps1");
+  const fixtureScript = path.join(runtimeRoot, "Copy-CompanyOwnerCredential.ps1");
   const fixturePathSafety = path.join(runtimeRoot, "Path-Safety.ps1");
 
   await mkdir(runtimeRoot, { recursive: true });
   await mkdir(credentialRoot, { recursive: true });
   await Promise.all([
-    copyFile(new URL("../runtime/Copy-CeoTrainingCredential.ps1", import.meta.url), fixtureScript),
+    copyFile(new URL("../runtime/Copy-CompanyOwnerCredential.ps1", import.meta.url), fixtureScript),
     copyFile(new URL("../runtime/Path-Safety.ps1", import.meta.url), fixturePathSafety),
     writeFile(path.join(credentialRoot, "credential"), fakeCredential, "utf8"),
   ]);
@@ -53,7 +53,7 @@ function quotePowerShell(value) {
 
 test("runtime path checks do not depend on APIs missing from Windows PowerShell 5.1", async () => {
   const [copySource, startSource, discordSource, pathSource, bridgeSource, incidentWatcherSource] = await Promise.all([
-    readFile(new URL("../runtime/Copy-CeoTrainingCredential.ps1", import.meta.url), "utf8"),
+    readFile(new URL("../runtime/Copy-CompanyOwnerCredential.ps1", import.meta.url), "utf8"),
     readFile(new URL("../runtime/Start-Company.ps1", import.meta.url), "utf8"),
     readFile(new URL("../runtime/discord/Start-Discord.ps1", import.meta.url), "utf8"),
     readFile(new URL("../runtime/Path-Safety.ps1", import.meta.url), "utf8"),
@@ -117,7 +117,7 @@ test("Windows PowerShell 5.1 flattens REST arrays before issue scans and paginat
   assert.equal(result.stdout.trim(), "rest-array-compatible");
 });
 
-test("CEO credential copy helper runs on Windows PowerShell 5.1 without touching the real clipboard", {
+test("company owner credential copy helper runs on Windows PowerShell 5.1 without touching the real clipboard", {
   skip: process.platform !== "win32",
 }, async () => {
   const fixture = await createCredentialFixture();
@@ -137,6 +137,21 @@ test("CEO credential copy helper runs on Windows PowerShell 5.1 without touching
   } finally {
     await rm(fixture.fixtureRoot, { recursive: true, force: true });
   }
+});
+
+test("operator-facing documentation uses the company owner credential command", async () => {
+  const legacyCommand = ["Copy", "CeoTrainingCredential.ps1"].join("-");
+  const currentCommand = "Copy-CompanyOwnerCredential.ps1";
+  const sources = await Promise.all([
+    readFile(new URL("../README.md", import.meta.url), "utf8"),
+    readFile(new URL("../runtime/README.md", import.meta.url), "utf8"),
+    readFile(new URL("../training-center/README.md", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/TrainingCenter.tsx", import.meta.url), "utf8"),
+  ]);
+
+  for (const source of sources) assert.match(source, new RegExp(currentCommand.replaceAll(".", "\\.")));
+  assert.doesNotMatch(sources.join("\n"), new RegExp(legacyCommand.replaceAll(".", "\\.")));
+  await assert.rejects(readFile(new URL(`../runtime/${legacyCommand}`, import.meta.url)), { code: "ENOENT" });
 });
 
 test("Windows PowerShell 5.1 path containment rejects parent and sibling-prefix escapes", {

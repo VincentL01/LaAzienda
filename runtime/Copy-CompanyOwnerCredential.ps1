@@ -3,6 +3,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+$pathSafetyPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "Path-Safety.ps1"))
 $assetsRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "assets"))
 $ownerRoot = [IO.Path]::GetFullPath((Join-Path $assetsRoot "owner"))
 $ownerRuntimeRoot = [IO.Path]::GetFullPath((Join-Path $ownerRoot "runtime"))
@@ -12,13 +13,18 @@ $credentialBytes = $null
 $credential = $null
 
 try {
-  $relativeRoot = [IO.Path]::GetRelativePath($repoRoot, $ownerRuntimeRoot)
-  $relativeCredential = [IO.Path]::GetRelativePath($repoRoot, $credentialPath)
-  if ($relativeRoot -eq ".." -or $relativeRoot.StartsWith("..$([IO.Path]::DirectorySeparatorChar)") -or
-      $relativeCredential -eq ".." -or $relativeCredential.StartsWith("..$([IO.Path]::DirectorySeparatorChar)")) {
-    throw "Resolved owner credential source left the repository boundary."
+  if (-not (Test-Path -LiteralPath $pathSafetyPath -PathType Leaf)) {
+    throw "The repository path-safety helper is unavailable."
   }
-  if ($relativeCredential.Replace('\', '/') -ne $credentialRelativePath) {
+  $pathSafetyItem = Get-Item -LiteralPath $pathSafetyPath -Force
+  if (($pathSafetyItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+    throw "Refusing a reparse point for the repository path-safety helper."
+  }
+  . $pathSafetyPath
+
+  $relativeRoot = Get-LaAziendaRepositoryRelativePath -RepositoryRoot $repoRoot -CandidatePath $ownerRuntimeRoot
+  $relativeCredential = Get-LaAziendaRepositoryRelativePath -RepositoryRoot $repoRoot -CandidatePath $credentialPath
+  if ($relativeRoot -cne "assets/owner/runtime" -or $relativeCredential -cne $credentialRelativePath) {
     throw "Resolved owner credential source is not the expected ignored owner file."
   }
   if (-not (Get-Command git -ErrorAction SilentlyContinue)) {

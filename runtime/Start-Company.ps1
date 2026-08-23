@@ -8,6 +8,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+$pathSafetyPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "Path-Safety.ps1"))
+if (-not (Test-Path -LiteralPath $pathSafetyPath -PathType Leaf)) {
+  throw "The repository path-safety helper is unavailable."
+}
+$pathSafetyItem = Get-Item -LiteralPath $pathSafetyPath -Force
+if (($pathSafetyItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+  throw "Refusing a reparse point for the repository path-safety helper."
+}
+. $pathSafetyPath
 $stateRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "state"))
 $bridgeTokenPath = [IO.Path]::GetFullPath((Join-Path $stateRoot "runtime-bridge-token"))
 $assetsRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot "assets"))
@@ -37,9 +46,7 @@ foreach ($resolvedPath in @($stateRoot, $bridgeTokenPath, $mergeWatcherPath, $in
   $discordStartPath, $githubTokenPath, $discordConfigPath, $discordBotTokenPath,
   $discordRuntimeRoot, $discordStatusTokenPath, $discordGatewayClientTokenPath,
   $legacyDiscordStatusTokenPath, $legacyDiscordGatewayClientTokenPath)) {
-  if (-not $resolvedPath.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Resolved company runtime path left the repository boundary."
-  }
+  Get-LaAziendaRepositoryRelativePath -RepositoryRoot $repoRoot -CandidatePath $resolvedPath | Out-Null
 }
 $hrmStatePrefix = "$stateRoot$([IO.Path]::DirectorySeparatorChar)"
 if ($discordRuntimeRoot.StartsWith($hrmStatePrefix, [StringComparison]::OrdinalIgnoreCase)) {
@@ -52,12 +59,12 @@ if ($ownerRuntimeRoot -eq $discordRuntimeRoot) {
   throw "Owner and Discord credentials must use separate host boundaries."
 }
 foreach ($ownerSecretPath in @($ownerCredentialPath)) {
-  $relativeOwnerSecretPath = [IO.Path]::GetRelativePath($repoRoot, $ownerSecretPath).Replace('\', '/')
+  $relativeOwnerSecretPath = Get-LaAziendaRepositoryRelativePath -RepositoryRoot $repoRoot -CandidatePath $ownerSecretPath
   & git -C $repoRoot check-ignore --quiet -- $relativeOwnerSecretPath
   if ($LASTEXITCODE -ne 0) { throw "The owner credential must remain Git-ignored." }
 }
 foreach ($discordSecretPath in @($discordStatusTokenPath, $discordGatewayClientTokenPath)) {
-  $relativeDiscordSecretPath = [IO.Path]::GetRelativePath($repoRoot, $discordSecretPath).Replace('\', '/')
+  $relativeDiscordSecretPath = Get-LaAziendaRepositoryRelativePath -RepositoryRoot $repoRoot -CandidatePath $discordSecretPath
   & git -C $repoRoot check-ignore --quiet -- $relativeDiscordSecretPath
   if ($LASTEXITCODE -ne 0) { throw "Discord runtime credentials must remain Git-ignored." }
 }
@@ -207,7 +214,7 @@ if (-not $portalId) {
 }
 $portalEnvironmentJson = & docker container inspect --format "{{json .Config.Env}}" $portalContainer
 if ($LASTEXITCODE -ne 0) { throw "The Company Portal environment could not be verified." }
-$portalEnvironment = @($portalEnvironmentJson | ConvertFrom-Json)
+$portalEnvironment = @($portalEnvironmentJson | ConvertFrom-Json | ForEach-Object { $_ })
 if (@($portalEnvironment | Where-Object { $_ -like "OWNER_SESSION_CREDENTIAL=*" }).Count -gt 0) {
   throw "The Company Portal must never contain the raw owner credential."
 }

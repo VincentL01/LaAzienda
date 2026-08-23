@@ -272,7 +272,7 @@ test("locked Training Room exposes a visible keyboard-usable credential control"
 test("portal receives only the verifier and owner login verifies before schema initialization", async () => {
   const [routeSource, scriptSource, startSource, bridgeSource, reconcileSource, ownerAuthSource, schemaSource, ensureSource, migrationSource, priorMigration] = await Promise.all([
     readFile(new URL("../app/api/owner-session/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../runtime/Copy-CeoTrainingCredential.ps1", import.meta.url), "utf8"),
+    readFile(new URL("../runtime/Copy-CompanyOwnerCredential.ps1", import.meta.url), "utf8"),
     readFile(new URL("../runtime/Start-Company.ps1", import.meta.url), "utf8"),
     readFile(new URL("../runtime/bridge.ps1", import.meta.url), "utf8"),
     readFile(new URL("../runtime/hrm/reconcile.sh", import.meta.url), "utf8"),

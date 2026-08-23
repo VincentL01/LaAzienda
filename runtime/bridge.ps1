@@ -143,7 +143,7 @@ function Test-ExpectedBindMount([object]$Inspection, [string]$HostPath, [string]
 }
 
 function Get-ManagedSecretSourceInspection([string]$Name, [string]$HostPath, [string]$ContainerPath) {
-  $rawInspection = @(& docker container inspect $Name | ConvertFrom-Json)
+  $rawInspection = @(& docker container inspect $Name | ConvertFrom-Json | ForEach-Object { $_ })
   if ($LASTEXITCODE -ne 0 -or $rawInspection.Count -ne 1) { throw "Could not inspect the $Name credential source." }
   $inspection = $rawInspection[0]
   $labels = $inspection.Config.Labels
@@ -206,7 +206,7 @@ function Send-HrmRuntimeEvent([string]$RuntimeStatus, [string]$Detail, [string]$
 $hrmId = & docker container ls --all --filter "name=^$hrmContainer$" --format "{{.ID}}"
 $hrmExists = [bool]$hrmId
 if ($hrmExists) {
-  $hrmInspectionRows = @(& docker container inspect $hrmContainer | ConvertFrom-Json)
+  $hrmInspectionRows = @(& docker container inspect $hrmContainer | ConvertFrom-Json | ForEach-Object { $_ })
   if ($LASTEXITCODE -ne 0 -or $hrmInspectionRows.Count -ne 1) { throw "Could not inspect the HR Manager container." }
   $hrmInspection = $hrmInspectionRows[0]
   $hrmLabels = $hrmInspection.Config.Labels
@@ -275,7 +275,7 @@ if ($hrm.desiredRuntimeStatus -eq "running" -and -not $hrmExists) {
   $createArgs += $hrmImageIdentity
   & docker @createArgs | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "The HR Manager container could not be created." }
-  $createdHrmRows = @(& docker container inspect $hrmContainer | ConvertFrom-Json)
+  $createdHrmRows = @(& docker container inspect $hrmContainer | ConvertFrom-Json | ForEach-Object { $_ })
   $createdHrmLabels = if ($createdHrmRows.Count -eq 1) { $createdHrmRows[0].Config.Labels } else { $null }
   if ($LASTEXITCODE -ne 0 -or $createdHrmRows.Count -ne 1 -or
       [string]$createdHrmRows[0].Image -ne $hrmImageIdentity -or

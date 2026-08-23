@@ -165,7 +165,7 @@ function Test-IncidentIssue([object]$Issue, [string]$ExpectedTitle, [string]$Mar
 function Find-ExistingIssue([string]$ExpectedTitle, [string]$Marker) {
   for ($page = 1; $page -le 20; $page++) {
     $items = @(Invoke-RestMethod -Uri "$githubApi/repos/$repository/issues?state=all&sort=created&direction=desc&per_page=100&page=$page" `
-      -Headers $githubHeaders -Method Get -TimeoutSec 20)
+      -Headers $githubHeaders -Method Get -TimeoutSec 20 | ForEach-Object { $_ })
     foreach ($item in $items) {
       if (Test-IncidentIssue $item $ExpectedTitle $Marker) { return $item }
     }
